@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "firmware-evolution" ]
+  pull_request:
+    branches: [ "main", "firmware-evolution" ]
+
+jobs:
+  host-tests:
+    name: Host Tests (gcc + ASan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run host test suite with ASan and UBSan
+        run: |
+          bash test/run_tests.sh --asan -- --junit
+
+      - name: Upload JUnit Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-test-results
+          path: test/test_results.xml
+
+  firmware-build:
+    name: Firmware Build (ESP-IDF v6.0.2)
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.0.2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache ESP-IDF components and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            managed_components
+            ~/.ccache
+          key: idf-build-${{ runner.os }}-${{ hashFiles('main/idf_component.yml', 'dependencies.lock') }}
+          restore-keys: |
+            idf-build-${{ runner.os }}-
+
+      - name: Build firmware
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py build
+
+      - name: Report firmware component sizes
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py size-components
+
+  configurator:
+    name: Configurator (Lint & Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: configurator
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: configurator/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript check and Build
+        run: npm run build

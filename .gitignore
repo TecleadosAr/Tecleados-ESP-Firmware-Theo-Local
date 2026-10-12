@@ -62,3 +62,11 @@ sdkconfig.ci
 managed_components/
 CLAUDE.md
 .vscode/
+
+# Test artifacts
+test/test_runner
+
+# Node / Configurator
+node_modules/
+configurator/node_modules/
+configurator/dist/
