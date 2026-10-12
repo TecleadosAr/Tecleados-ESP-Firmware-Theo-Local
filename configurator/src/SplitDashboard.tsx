@@ -7,6 +7,7 @@ import {
     SPLIT_STATE_CONNECTING,
     SPLIT_STATE_CONNECTED,
     SPLIT_STATE_DISCONNECTED,
+    SPLIT_STATE_VERSION_MISMATCH,
     SPLIT_ROLE_NONE,
     SPLIT_ROLE_MASTER,
     SPLIT_ROLE_SLAVE,
@@ -26,6 +27,7 @@ function stateLabel(s: number): string {
         case SPLIT_STATE_CONNECTING:   return 'Connecting…';
         case SPLIT_STATE_CONNECTED:    return 'Connected';
         case SPLIT_STATE_DISCONNECTED: return 'Disconnected';
+        case SPLIT_STATE_VERSION_MISMATCH: return 'Version Mismatch';
         default:                       return `Unknown (${s})`;
     }
 }
@@ -43,7 +45,8 @@ function stateColor(s: number): string {
         case SPLIT_STATE_CONNECTED:    return 'var(--success-color)';
         case SPLIT_STATE_PAIRING:
         case SPLIT_STATE_CONNECTING:   return '#f39c12';
-        case SPLIT_STATE_DISCONNECTED: return 'var(--danger-color)';
+        case SPLIT_STATE_DISCONNECTED:
+        case SPLIT_STATE_VERSION_MISMATCH: return 'var(--danger-color)';
         default:                       return 'rgba(255,255,255,0.3)';
     }
 }

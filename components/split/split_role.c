@@ -129,6 +129,12 @@ esp_err_t split_role_on_negotiate(const uint8_t *src_mac,
     const split_role_negotiate_payload_t *p =
         (const split_role_negotiate_payload_t *)payload;
 
+    if (p->proto_version != SPLIT_PROTO_VERSION) {
+        ESP_LOGE(TAG, "ROLE_NEGOTIATE proto version mismatch: peer=%u, us=%u",
+                 p->proto_version, SPLIT_PROTO_VERSION);
+        return ESP_ERR_INVALID_VERSION;
+    }
+
     ESP_LOGD(TAG, "ROLE_NEGOTIATE from " MACSTR
              " usb=%u ble_bm=0x%02X last_role=%u",
              MAC2STR(src_mac),

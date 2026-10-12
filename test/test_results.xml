@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites tests="130" failures="0" time="0">
+<testsuites tests="134" failures="0" time="0">
   <testsuite name="kb_state" tests="8" failures="0">
     <testcase name="init_sets_zero" classname="kb_state" time="0.0000"/>
     <testcase name="update_caps_lock" classname="kb_state" time="0.0000"/>
@@ -115,7 +115,7 @@
     <testcase name="full_ble_event_sequence" classname="status_module" time="0.0000"/>
     <testcase name="split_connected_and_disconnected" classname="status_module" time="0.0000"/>
   </testsuite>
-  <testsuite name="split_protocol" tests="19" failures="0">
+  <testsuite name="split_protocol" tests="23" failures="0">
     <testcase name="build_returns_correct_total_size" classname="split_protocol" time="0.0000"/>
     <testcase name="build_zero_payload" classname="split_protocol" time="0.0000"/>
     <testcase name="build_max_payload" classname="split_protocol" time="0.0000"/>
@@ -135,6 +135,10 @@
     <testcase name="parse_exactly_overhead_bytes_ok" classname="split_protocol" time="0.0000"/>
     <testcase name="fuzz_single_byte_mutations" classname="split_protocol" time="0.0000"/>
     <testcase name="round_trip_all_message_types" classname="split_protocol" time="0.0000"/>
+    <testcase name="discovery_payload_version_matches" classname="split_protocol" time="0.0000"/>
+    <testcase name="role_negotiate_payload_version_matches" classname="split_protocol" time="0.0000"/>
+    <testcase name="heartbeat_payload_version_matches" classname="split_protocol" time="0.0000"/>
+    <testcase name="version_mismatch_detected" classname="split_protocol" time="0.0000"/>
   </testsuite>
   <testsuite name="split_crypto" tests="12" failures="0">
     <testcase name="encrypt_decrypt_round_trip_short" classname="split_crypto" time="0.0000"/>

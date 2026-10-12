@@ -56,6 +56,7 @@ export const SPLIT_STATE_PAIRING = 2;
 export const SPLIT_STATE_CONNECTING = 3;
 export const SPLIT_STATE_CONNECTED = 4;
 export const SPLIT_STATE_DISCONNECTED = 5;
+export const SPLIT_STATE_VERSION_MISMATCH = 6;
 
 export const SPLIT_ROLE_NONE = 0;
 export const SPLIT_ROLE_MASTER = 1;

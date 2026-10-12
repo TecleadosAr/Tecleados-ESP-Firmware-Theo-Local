@@ -109,7 +109,8 @@ void split_task_send_role_negotiate(void)
     }
 
     split_role_negotiate_payload_t rp = {
-        .proposed_role = 0,  // Field kept for wire compatibility; no longer used in role decision.
+        .proto_version    = SPLIT_PROTO_VERSION,
+        .proposed_role    = 0,  // Field kept for wire compatibility; no longer used in role decision.
         .usb_connected    = (uint8_t)(tud_mounted() ? 1 : 0),
         .ble_connected_bitmap = ble_hid_get_connected_profiles_bitmap(),
         .selected_profile     = (int8_t)cfg_ble_get_state()->selected_profile,
@@ -254,6 +255,7 @@ static void tick_heartbeat(TickType_t now)
     }
 
     split_heartbeat_payload_t hb = {
+        .proto_version = SPLIT_PROTO_VERSION,
         .state       = (uint8_t)split_session_get_state(),
         .role        = (uint8_t)split_session_get_role(),
         .battery_pct = bat_pct,

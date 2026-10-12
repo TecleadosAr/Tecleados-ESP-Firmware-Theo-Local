@@ -94,6 +94,13 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac, const uint8_t *pay
     if (len < sizeof(split_role_negotiate_payload_t)) return;
     const split_role_negotiate_payload_t *p = (const split_role_negotiate_payload_t *)payload;
 
+    if (p->proto_version != SPLIT_PROTO_VERSION) {
+        ESP_LOGE(TAG, "ROLE_NEGOTIATE proto version mismatch: peer=%u, us=%u",
+                 p->proto_version, SPLIT_PROTO_VERSION);
+        split_session_set_state(SPLIT_STATE_VERSION_MISMATCH);
+        return;
+    }
+
     if (split_session_get_state() == SPLIT_STATE_CONNECTED) {
         if (p->random_salt == split_session_get_last_peer_salt()) {
              on_role_negotiate(src_mac, payload, len);
@@ -247,6 +254,14 @@ static void handle_heartbeat_msg(const uint8_t *payload, size_t len)
     if (len < sizeof(split_heartbeat_payload_t)) return;
 
     const split_heartbeat_payload_t *hb = (const split_heartbeat_payload_t *)payload;
+
+    if (hb->proto_version != SPLIT_PROTO_VERSION) {
+        ESP_LOGE(TAG, "HEARTBEAT proto version mismatch: peer=%u, us=%u",
+                 hb->proto_version, SPLIT_PROTO_VERSION);
+        split_session_set_state(SPLIT_STATE_VERSION_MISMATCH);
+        return;
+    }
+
     split_session_set_rssi(hb->rssi);
 
     if (split_session_get_state() != SPLIT_STATE_CONNECTED) return;
@@ -255,6 +270,7 @@ static void handle_heartbeat_msg(const uint8_t *payload, size_t len)
     if (role == SPLIT_ROLE_MASTER) {
         // Echo sent_us so the slave can compute RTT = (now - sent_us) / 2.
         split_heartbeat_payload_t resp = {
+            .proto_version = SPLIT_PROTO_VERSION,
             .state       = (uint8_t)split_session_get_state(),
             .role        = (uint8_t)role,
             .battery_pct = 0xFF,

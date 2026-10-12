@@ -261,3 +261,58 @@ TEST_CASE(split_protocol, round_trip_all_message_types) {
         TEST_ASSERT(memcmp(out_p, payload, 16) == 0);
     }
 }
+
+/* ---- Protocol versioning tests ---- */
+
+TEST_CASE(split_protocol, discovery_payload_version_matches) {
+    split_discovery_payload_t disc = {
+        .proto_version    = SPLIT_PROTO_VERSION,
+        .preferred_role   = 1,
+        .firmware_version = 0x0001,
+    };
+    memset(disc.device_id, 0x11, 6);
+
+    TEST_ASSERT_EQUAL(SPLIT_PROTO_VERSION, disc.proto_version);
+    TEST_ASSERT_EQUAL(10, (int)sizeof(split_discovery_payload_t));
+}
+
+TEST_CASE(split_protocol, role_negotiate_payload_version_matches) {
+    split_role_negotiate_payload_t rn = {
+        .proto_version = SPLIT_PROTO_VERSION,
+        .proposed_role = 0,
+        .usb_connected = 1,
+        .random_salt   = 0x12345678,
+    };
+    TEST_ASSERT_EQUAL(SPLIT_PROTO_VERSION, rn.proto_version);
+}
+
+TEST_CASE(split_protocol, heartbeat_payload_version_matches) {
+    split_heartbeat_payload_t hb = {
+        .proto_version = SPLIT_PROTO_VERSION,
+        .state         = 4,
+        .role          = 1,
+        .battery_pct   = 85,
+        .rssi          = -60,
+        .sent_us       = 123456,
+    };
+    TEST_ASSERT_EQUAL(SPLIT_PROTO_VERSION, hb.proto_version);
+    TEST_ASSERT_EQUAL(9, (int)sizeof(split_heartbeat_payload_t));
+}
+
+TEST_CASE(split_protocol, version_mismatch_detected) {
+    split_heartbeat_payload_t hb_old = {
+        .proto_version = 0x01, /* Incompatible version */
+        .state         = 4,
+        .role          = 1,
+    };
+    bool is_compatible = (hb_old.proto_version == SPLIT_PROTO_VERSION);
+    TEST_ASSERT_FALSE(is_compatible);
+
+    split_heartbeat_payload_t hb_current = {
+        .proto_version = SPLIT_PROTO_VERSION,
+        .state         = 4,
+        .role          = 1,
+    };
+    is_compatible = (hb_current.proto_version == SPLIT_PROTO_VERSION);
+    TEST_ASSERT_TRUE(is_compatible);
+}

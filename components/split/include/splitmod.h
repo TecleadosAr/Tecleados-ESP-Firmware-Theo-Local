@@ -22,6 +22,7 @@ typedef enum split_state : uint8_t {
     SPLIT_STATE_CONNECTING   = 3,  // Paired, negotiating roles
     SPLIT_STATE_CONNECTED    = 4,  // Fully operational
     SPLIT_STATE_DISCONNECTED = 5,  // Was connected, link lost — reconnecting
+    SPLIT_STATE_VERSION_MISMATCH = 6, // Peer rejected due to protocol version mismatch
 } split_state_t;
 
 typedef struct split_status {

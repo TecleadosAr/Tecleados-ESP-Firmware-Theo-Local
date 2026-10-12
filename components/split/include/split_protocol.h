@@ -10,6 +10,7 @@
 
 #define SPLIT_FRAME_MAGIC        0x4B53   // "KS" (Keyboard Split)
 #define SPLIT_FRAME_VERSION      0x02
+#define SPLIT_PROTO_VERSION      0x02
 
 #define SPLIT_PROTO_SPLIT        0x01     // Split keyboard protocol
 #define SPLIT_PROTO_DONGLE       0x02     // Dongle protocol (future)
@@ -91,7 +92,7 @@ _Static_assert(sizeof(split_frame_header_t) == SPLIT_FRAME_HEADER_SIZE,
 
 /** SPLIT_MSG_DISCOVERY — broadcast during pairing. Unencrypted. */
 typedef struct __attribute__((packed)) split_discovery_payload {
-    uint8_t  version;           // Protocol version
+    uint8_t  proto_version;     // Protocol version (SPLIT_PROTO_VERSION)
     uint8_t  device_id[6];      // This device's MAC
     uint8_t  preferred_role;    // 0=auto, 1=master, 2=slave
     uint16_t firmware_version;  // For compatibility checks
@@ -115,6 +116,7 @@ typedef struct __attribute__((packed)) split_role_payload {
  *  Carries USB/BLE state and the last persisted role so the decision algorithm
  *  can pick the right master without user intervention after a link drop. */
 typedef struct __attribute__((packed)) split_role_negotiate_payload {
+    uint8_t  proto_version;      // Protocol version (SPLIT_PROTO_VERSION)
     uint8_t  proposed_role;      // Explicit user preference (split_role_t); 0 = auto
     uint8_t  device_id[6];       // Sender's MAC address (tiebreaker)
     uint8_t  usb_connected;      // 1 if sender has an active USB host connection
@@ -140,6 +142,7 @@ typedef struct __attribute__((packed)) split_key_state_delta_payload {
 
 /** SPLIT_MSG_HEARTBEAT — keepalive. */
 typedef struct __attribute__((packed)) split_heartbeat_payload {
+    uint8_t  proto_version;     // Protocol version (SPLIT_PROTO_VERSION)
     uint8_t  state;             // Sender's split_state_t
     uint8_t  role;              // Sender's split_role_t
     uint8_t  battery_pct;      // Battery percentage (0xFF = wired/unknown)

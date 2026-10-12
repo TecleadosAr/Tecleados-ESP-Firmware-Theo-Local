@@ -110,7 +110,7 @@ size_t split_pair_build_discovery(uint8_t *out, size_t out_max,
     if (!out || out_max < sizeof(split_discovery_payload_t)) return 0;
 
     split_discovery_payload_t *p = (split_discovery_payload_t *)out;
-    p->version          = SPLIT_FRAME_VERSION;
+    p->proto_version    = SPLIT_PROTO_VERSION;
     p->preferred_role   = preferred_role;
     p->firmware_version = 0x0001;
     memcpy(p->device_id, own_mac, 6);
@@ -126,9 +126,9 @@ esp_err_t split_pair_on_discovery(const uint8_t *src_mac,
 
     const split_discovery_payload_t *disc = (const split_discovery_payload_t *)payload;
 
-    if (disc->version != SPLIT_FRAME_VERSION) {
+    if (disc->proto_version != SPLIT_PROTO_VERSION) {
         ESP_LOGW(TAG, "discovery: version mismatch peer=%u us=%u",
-                 disc->version, SPLIT_FRAME_VERSION);
+                 disc->proto_version, SPLIT_PROTO_VERSION);
         return ESP_ERR_NOT_SUPPORTED;
     }
 
