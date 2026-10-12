@@ -66,6 +66,9 @@ Because these buffers are shared across all transports, the engine enforces an *
 When a multi-packet (Blast) transfer begins from Transport A, the session manager locks the COMM channel. If Transport B tries to send a packet while Transport A holds the lock, the packet is immediately rejected with `PAYLOAD_FLAG_ERR` (BUSY). The lock is automatically released upon transfer completion or a 1000ms watchdog timeout.
 
 This guarantees absolute safety and zero heap fragmentation, regardless of how many configurators attempt to connect simultaneously.
+ 
+### Timeout Management (`esp_timer`)
+Timeouts for RX and TX buffers are managed event-driven using a one-shot `esp_timer` (`s_comm_timeout_timer`) rather than a dedicated polling task. The timer dynamically arms to the closest active deadline (`min(rx_deadline, tx_deadline)`). Upon expiration, it enqueues a single-byte control message (`0xFF`) into `s_comm_message_buffer`, allowing `comm_processing_task` to reset buffers safely within its own context (single-consumer pattern), freeing 4 KB of internal DRAM.
 
 ---
 

@@ -146,6 +146,28 @@ flowchart TD
 
 ### FASE 1: Core del Firmware, Concurrencia y Sincronización
 
+#### Checklist de Ejecución de Fase 1:
+- [x] **1.1. Bug de sincronización de Custom Keys**
+  - [x] Reemplazar cotas literales (64, 32) por constantes de dominio `CFG_CKEYS_MAX_COUNT` (120), `CFG_MACROS_MAX_COUNT` (64) y `CFG_COMBOS_MAX_COUNT` (32) en `components/split/split_config_sync.c`.
+  - [x] Instrumentación y medición temporal de `split_config_sync_push_all` con `esp_timer_get_time()`.
+  - [x] Tests unitarios en `test/split/test_split_config_sync.c` verificando sync completo de custom keys > 64 (`ck_64`, `ck_65`, `ck_119`), macros y combos.
+- [x] **1.2. Envío de reportes sin bloqueo y reintento acotado**
+  - [x] Implementación de `kb_macro_send_report_nowait()` (un único intento no bloqueante con snapshot de `s_v_nkro`) y `kb_macro_send_report_blocking(timeout_ms)` en `components/keyboard/kb_macro.c`.
+  - [x] Desacople de scan loop en `components/keyboard/kb_manager.c`: actualización inmediata de matriz física en `s_last_matrix` para evitar regeneración redundante de eventos, y manejo de fallo de transporte vía `s_report_pending` con backoff exponencial acotado (1 ms -> 2 ms -> ... -> 16 ms).
+  - [x] Tests unitarios en `test/keyboard/test_kb_report.c` validando entrega inmediata cuando está listo, fallo inmediato sin bloqueo, y reintentos acotados.
+- [x] **1.3. Estado de capas dinámicas thread-safe y atómico**
+  - [x] Conversión de `s_momentary_layers` y `s_toggled_layers` a `_Atomic uint32_t` con `stdatomic.h` en `components/keyboard/kb_macro.c`.
+  - [x] `kb_macro_get_layer_mask(void)` convertido en getter puro sin efectos secundarios (`memory_order_relaxed`).
+  - [x] Purga de capas eliminadas trasladada a `kb_macro_purge_deleted_layers(void)` suscrito al evento `CONFIG_EVENT_KIND_UPDATED` de layouts en el `event_bus`.
+  - [x] Tests multihilo con `pthread` y verificación bajo ThreadSanitizer (`--tsan`) en `test/keyboard/test_kb_layout.c`.
+- [x] **1.4. FreeRTOS: Reemplazo de polling en comm_timeouts_task por esp_timer**
+  - [x] Eliminación de `comm_timeouts_task` (liberando 4 KB de DRAM interna crítica) y del bucle de sondeo cada 5 ms.
+  - [x] Temporizador one-shot `s_comm_timeout_timer` con `esp_timer` programado al plazo mínimo (`min(rx_deadline, tx_deadline)`).
+  - [x] Encolado de mensaje de control (1 byte `0xFF`) a `s_comm_message_buffer` preservando un único consumidor seguro en `comm_proc_task`.
+- [x] **1.5. Instalación autónoma del servicio de ISR**
+  - [x] Invocación defensiva de `gpio_install_isr_service(0)` en `kb_matrix_init_isr()` en `components/keyboard/kb_matrix.c`, tolerando `ESP_ERR_INVALID_STATE`.
+  - [x] Tolerancia a `ESP_ERR_INVALID_STATE` en `components/button_module/button.c` para inicialización independiente y agnóstica al orden de arranque.
+
 #### 1.1. Bug de sincronización de Custom Keys (quick win, **primer commit de la fase**)
 * **Diagnóstico confirmado:** [`split_config_sync.c#L264`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c#L264) itera `j < 64` pero `CFG_CKEYS_MAX_COUNT = 120`. Las ckeys 64–119 nunca llegan al esclavo.
 * **Acciones:**

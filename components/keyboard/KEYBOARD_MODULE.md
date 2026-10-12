@@ -43,6 +43,8 @@ To prevent I/O blocking from slowing down the logic engine, the keyboard uses a 
 2.  The management task takes a **mutex-protected snapshot** of this map (taking ~50ns).
 3.  The snapshot is then passed to the reporting layer (`kb_report.c`) where it may wait for USB/BLE transport.
 4.  This decoupling ensures that logical key presses never wait for slow radio or USB acknowledge cycles.
+5.  **Non-blocking delivery & retry**: Scans use `kb_macro_send_report_nowait()` without busy retries. Transport delivery failures are handled via `s_report_pending` with exponential backoff (1ms..16ms), preventing matrix scan blocking and guaranteeing zero stuck keys.
+6.  **Atomic Layer Masks**: Layer states (`s_momentary_layers` and `s_toggled_layers`) use C11 `_Atomic uint32_t` (native Xtensa CAS `S32C1I`), ensuring thread-safe, lock-free access across tasks and cores. Layer purges are decoupled into event bus callbacks.
 
 ---
 
