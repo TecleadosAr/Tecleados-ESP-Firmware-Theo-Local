@@ -291,6 +291,7 @@ esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn
 {
     ESP_LOGI(TAG, "pushing main config kinds to slave");
     int64_t start_us = esp_timer_get_time();
+    esp_err_t last_ret = ESP_OK;
 
     // Use a bool[256] instead of a uint32_t bitmask: shifting by kind >= 32 is
     // undefined behaviour in C, and cfgmod_kind_t is not bounded to < 32.
@@ -299,14 +300,16 @@ esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn
         cfgmod_kind_t kind = SPLIT_SYNC_ENTRIES[i].kind;
         if (pushed[(uint8_t)kind]) continue;
 
-        split_config_sync_push_kind(peer_mac, get_seq, kind);
+        esp_err_t ret = split_config_sync_push_kind(peer_mac, get_seq, kind);
+        if (ret != ESP_OK) last_ret = ret;
         pushed[(uint8_t)kind] = true;
     }
 
     int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
-    ESP_LOGI(TAG, "split_config_sync_push_all completed in %lld ms", (long long)elapsed_ms);
+    ESP_LOGI(TAG, "split_config_sync_push_all completed in %lld ms (result: %s)",
+             (long long)elapsed_ms, esp_err_to_name(last_ret));
 
-    return ESP_OK;
+    return last_ret;
 }
 
 

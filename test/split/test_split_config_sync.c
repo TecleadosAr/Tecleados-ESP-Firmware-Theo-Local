@@ -26,11 +26,16 @@ uint64_t split_session_next_seq(void) {
     return mock_seq_alloc();
 }
 
+static bool s_mock_transport_fail = false;
+
 esp_err_t split_transport_send(const uint8_t *dst_mac, uint8_t proto,
                               uint8_t type, uint64_t seq,
                               const uint8_t *payload, size_t len)
 {
     (void)dst_mac; (void)proto; (void)seq;
+    if (s_mock_transport_fail) {
+        return ESP_FAIL;
+    }
     if (type == SPLIT_MSG_CONFIG_SYNC && len >= SPLIT_CONFIG_SYNC_HDR_SIZE) {
         const split_config_sync_payload_t *hdr = (const split_config_sync_payload_t *)payload;
         if (s_recorded_count < MAX_RECORDED_PUSHES) {
@@ -141,4 +146,38 @@ TEST_CASE(split_config_sync, combos_sync_all_32) {
     TEST_ASSERT(was_key_pushed(CFGMOD_KIND_COMBO, "cmb_15"));
     TEST_ASSERT(was_key_pushed(CFGMOD_KIND_COMBO, "cmb_31"));
     TEST_ASSERT(!was_key_pushed(CFGMOD_KIND_COMBO, "cmb_1"));
+}
+
+TEST_CASE(split_config_sync, push_all_propagates_success) {
+    s_recorded_count = 0;
+    mock_nvs_reset();
+
+    cfg_system_t sys = {0};
+    cfgmod_write_storage(CFGMOD_KIND_SYSTEM, "sys", &sys, sizeof(sys));
+
+    cfg_ble_state_t ble = {0};
+    cfgmod_write_storage(CFGMOD_KIND_CONNECTION, "ble_cfg", &ble, sizeof(ble));
+
+    uint8_t peer_mac[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+    esp_err_t err = split_config_sync_push_all(peer_mac, mock_seq_alloc);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT(s_recorded_count > 0);
+    // sys and ble_cfg should always be pushed in push_all
+    TEST_ASSERT(was_key_pushed(CFGMOD_KIND_SYSTEM, "sys"));
+    TEST_ASSERT(was_key_pushed(CFGMOD_KIND_CONNECTION, "ble_cfg"));
+}
+
+TEST_CASE(split_config_sync, push_all_propagates_error_on_failure) {
+    s_recorded_count = 0;
+    mock_nvs_reset();
+
+    cfg_system_t sys = {0};
+    cfgmod_write_storage(CFGMOD_KIND_SYSTEM, "sys", &sys, sizeof(sys));
+
+    s_mock_transport_fail = true;
+    uint8_t peer_mac[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+    esp_err_t err = split_config_sync_push_all(peer_mac, mock_seq_alloc);
+    s_mock_transport_fail = false;
+
+    TEST_ASSERT_EQUAL(ESP_FAIL, err);
 }
