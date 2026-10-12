@@ -79,6 +79,35 @@ flowchart TD
 
 ### FASE 0: Fundaciones
 
+#### Checklist de Ejecución de Fase 0:
+- [x] **0.1. Sanear la suite de tests host y mocks con ESP-IDF 6.x**
+  - [x] Includes dinámicos de componentes y flag `-std=gnu11` en `test/run_tests.sh`.
+  - [x] Soporte para AddressSanitizer y UndefinedBehaviorSanitizer (`--asan`).
+  - [x] Mock PSA Crypto (`psa/crypto.h`) para MbedTLS 3.x (ECDH, SHA256-KDF, AES-128-CCM).
+  - [x] Actualización de mocks `mock_comm`, `mock_esp`, `mock_tinyusb`, `cfgmod`.
+  - [x] Resolución de bitrot y 134/134 tests pasando con 0 fallos.
+- [x] **0.2. Pipeline de CI en GitHub Actions**
+  - [x] Crear `.github/workflows/ci.yml`.
+  - [x] Job `host-tests`: ejecución con `--asan` y subida de reporte JUnit (`test_results.xml`).
+  - [x] Job `firmware-build`: compilación en contenedor `espressif/idf:v6.0.2` con `idf.py build` y `size-components`.
+  - [x] Job `configurator`: `npm ci`, `npm run lint` y `npm run build`.
+- [x] **0.3. Línea base de métricas e instrumentación**
+  - [x] Kconfig `CONFIG_TEF_DEBUG_LATENCY_PIN` y conmutación de nivel en `kb_macro_virtual_press` al entrar nueva pulsación al NKRO.
+  - [x] Kconfig `CONFIG_TEF_MATRIX_SETTLE_US` (default 20 µs) en `kb_matrix.c`.
+  - [x] Módulo `components/keyboard/kb_telemetry.c` con histograma y tiempo bloqueado de `kb_macro_send_report`.
+  - [x] Documento de caracterización `implementations/baseline/BASELINE_METRICS.md` con inventario de tareas, presupuesto de CPU y consumos PPK2.
+- [x] **0.4. Presupuesto de pines y decisión de hardware**
+  - [x] Documento `implementations/PIN_BUDGET_HARDWARE_DECISION.md`.
+  - [x] Validación de pines bloqueados por Octal PSRAM (GPIO26–37).
+  - [x] Resolución de ADC1 ocupado vs I2C Fuel-Gauge / Split column remap.
+  - [x] Asignación de I2C Display (GPIO43/44), Encoders (GPIO46/47 o Matriz) y wake RTC (GPIO1–6).
+- [x] **0.5. Versionado del protocolo split**
+  - [x] Definición de `SPLIT_PROTO_VERSION` (0x02) en `split_protocol.h`.
+  - [x] Campo `proto_version` en `split_discovery_payload_t`, `split_role_negotiate_payload_t` y `split_heartbeat_payload_t`.
+  - [x] Verificación y rechazo de versiones incompatibles con transición a `SPLIT_STATE_VERSION_MISMATCH` (0x06).
+  - [x] Soporte de `SPLIT_STATE_VERSION_MISMATCH` en el configurador web (`protocol.ts`, `SplitDashboard.tsx`, `DeviceDashboard.tsx`).
+  - [x] Tests unitarios dedicados de versionado en `test/split/test_split_protocol.c`.
+
 #### 0.1. Sanear la suite de tests host (antes: 5.2)
 * **Estado verificado:** `cd test && bash run_tests.sh` → `fatal error: event_bus.h: No such file or directory`. `run_tests.sh` solo pasa `-Iinclude`.
 * **Acciones:**
