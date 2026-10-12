@@ -1,6 +1,7 @@
 #include "kb_macro.h"
 
 #include <string.h>
+#include <stdatomic.h>
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -14,6 +15,7 @@
 #include "cfgmod.h"
 #include "cfg_macros.h"
 #include "class/hid/hid.h"
+#include "event_bus.h"
 #include "kb_bitmap.h"
 #include "kb_custom_key.h"
 #include "kb_layout.h"
@@ -26,9 +28,9 @@ static const char *TAG = "kb_macro";
 static uint8_t            s_v_nkro[32];
 static SemaphoreHandle_t  s_v_nkro_mutex = NULL;
 
-/* ---- Active layer state ---- */
-static uint16_t s_momentary_layers = 0;
-static uint16_t s_toggled_layers   = 0;
+/* ---- Active layer state (atomic for cross-task/core safety) ---- */
+static _Atomic uint32_t s_momentary_layers = 0;
+static _Atomic uint32_t s_toggled_layers   = 0;
 
 /* ---- Macro task queues ---- */
 static QueueHandle_t s_macro_queue = NULL;
@@ -87,11 +89,24 @@ void kb_macro_virtual_release(uint8_t hid_keycode) {
     }
 }
 
-esp_err_t kb_macro_send_report(void) {
-    /* Snapshot the bitmap under the mutex (hold time ~50 ns) then retry outside
-     * it.  This prevents the up-to-100 ms retry loop from blocking virtual
-     * press/release on all other tasks.  A stale snapshot is harmless: the next
-     * scan iteration will send a fresh report within ~833 us. */
+esp_err_t kb_macro_send_report_nowait(void) {
+    uint8_t snapshot[sizeof(s_v_nkro)];
+    if (xSemaphoreTake(s_v_nkro_mutex, pdMS_TO_TICKS(1))) {
+        memcpy(snapshot, s_v_nkro, sizeof(s_v_nkro));
+        xSemaphoreGive(s_v_nkro_mutex);
+    } else {
+        return ESP_FAIL;
+    }
+
+    int64_t t_start_us = esp_timer_get_time();
+    esp_err_t err = kb_send_report(snapshot);
+    int64_t blocked_us = esp_timer_get_time() - t_start_us;
+    kb_macro_track_blocked_time(blocked_us, 0, err);
+
+    return err;
+}
+
+esp_err_t kb_macro_send_report_blocking(uint32_t timeout_ms) {
     uint8_t snapshot[sizeof(s_v_nkro)];
     if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
         memcpy(snapshot, s_v_nkro, sizeof(s_v_nkro));
@@ -103,7 +118,8 @@ esp_err_t kb_macro_send_report(void) {
     int64_t t_start_us = esp_timer_get_time();
     esp_err_t err = ESP_FAIL;
     int retries = 0;
-    for (int i = 0; i < 100; i++) {
+    int max_attempts = (timeout_ms == 0) ? 1 : (int)timeout_ms;
+    for (int i = 0; i < max_attempts; i++) {
         retries = i;
         err = kb_send_report(snapshot);
         if (err == ESP_OK) break;
@@ -113,6 +129,10 @@ esp_err_t kb_macro_send_report(void) {
     kb_macro_track_blocked_time(blocked_us, retries, err);
 
     return err;
+}
+
+esp_err_t kb_macro_send_report(void) {
+    return kb_macro_send_report_blocking(100);
 }
 
 /* Clear all virtual keys and send an empty report.
@@ -126,17 +146,31 @@ static void kb_macro_force_clear(void) {
 }
 
 uint16_t kb_macro_get_layer_mask(void) {
-    uint16_t mask = s_momentary_layers | s_toggled_layers | (1 << KB_LAYER_BASE);
-    // Prevent routing to deleted layers
+    uint32_t mom = atomic_load_explicit(&s_momentary_layers, memory_order_relaxed);
+    uint32_t tog = atomic_load_explicit(&s_toggled_layers, memory_order_relaxed);
+    return (uint16_t)(mom | tog | (1u << KB_LAYER_BASE));
+}
+
+void kb_macro_purge_deleted_layers(void) {
+    uint32_t valid_mask = (1u << KB_LAYER_BASE);
     for (uint8_t i = 1; i < KB_LAYER_MAX; i++) {
-        if ((mask & (1 << i)) && !cfg_layout_exists(i)) {
-            s_momentary_layers &= ~(1 << i);
-            s_toggled_layers   &= ~(1 << i);
-            mask &= ~(1 << i);
+        if (cfg_layout_exists(i)) {
+            valid_mask |= (1u << i);
         }
     }
-    return mask;
+    atomic_fetch_and_explicit(&s_momentary_layers, valid_mask, memory_order_relaxed);
+    atomic_fetch_and_explicit(&s_toggled_layers, valid_mask, memory_order_relaxed);
 }
+
+static void on_layout_config_updated(void *arg, esp_event_base_t base,
+                                     int32_t event_id, void *data) {
+    (void)arg; (void)base; (void)event_id;
+    const config_update_event_t *ev = (const config_update_event_t *)data;
+    if (ev && ev->kind == (uint8_t)CFGMOD_KIND_LAYOUT) {
+        kb_macro_purge_deleted_layers();
+    }
+}
+
 
 /* ============================================================
    Macro execution engine
@@ -434,22 +468,23 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
     if (IS_LAYER_ACTION(action_code)) {
         if (action_code == ACTION_CODE_LAYER_CLEAR_ALL) {
             if (is_pressed) {
-                s_momentary_layers = 0;
-                s_toggled_layers = 0;
+                atomic_store_explicit(&s_momentary_layers, 0, memory_order_relaxed);
+                atomic_store_explicit(&s_toggled_layers, 0, memory_order_relaxed);
             }
             return;
         }
         
         uint8_t layer_id = LAYER_ID_FROM_ACTION(action_code);
+        uint32_t bit = (1u << layer_id);
         if (IS_LAYER_MOMENTARY(action_code)) {
-            if (is_pressed) s_momentary_layers |= (1 << layer_id);
-            else            s_momentary_layers &= ~(1 << layer_id);
+            if (is_pressed) atomic_fetch_or_explicit(&s_momentary_layers, bit, memory_order_relaxed);
+            else            atomic_fetch_and_explicit(&s_momentary_layers, ~bit, memory_order_relaxed);
         } else if (IS_LAYER_TOGGLE(action_code)) {
-            if (is_pressed) s_toggled_layers ^= (1 << layer_id);
+            if (is_pressed) atomic_fetch_xor_explicit(&s_toggled_layers, bit, memory_order_relaxed);
         } else if (IS_LAYER_ON(action_code)) {
-            if (is_pressed) s_toggled_layers |= (1 << layer_id);
+            if (is_pressed) atomic_fetch_or_explicit(&s_toggled_layers, bit, memory_order_relaxed);
         } else if (IS_LAYER_OFF(action_code)) {
-            if (is_pressed) s_toggled_layers &= ~(1 << layer_id);
+            if (is_pressed) atomic_fetch_and_explicit(&s_toggled_layers, ~bit, memory_order_relaxed);
         }
         return;
     }
@@ -596,9 +631,11 @@ static void on_macros_updated(const char *key) {
 
 void kb_macro_init(void) {
     memset(s_v_nkro, 0, sizeof(s_v_nkro));
-    memset(s_rt_state, 0, sizeof(s_rt_state));
-    s_momentary_layers = 0;
-    s_toggled_layers = 0;
+    atomic_store_explicit(&s_momentary_layers, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_toggled_layers, 0, memory_order_relaxed);
+
+    esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
+                               on_layout_config_updated, NULL);
 
     s_v_nkro_mutex = xSemaphoreCreateMutex();
     s_macro_queue  = xQueueCreate(32, sizeof(macro_queue_item_t));

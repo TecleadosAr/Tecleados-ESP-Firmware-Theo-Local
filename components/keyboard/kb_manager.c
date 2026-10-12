@@ -445,18 +445,34 @@ static void kb_manager_task(void *arg) {
             }
         }
 
+        if (matrix_changed) {
+            memcpy(s_last_matrix, s_matrix, KB_MATRIX_BITMAP_BYTES);
+            s_last_matrix_valid = true;
+        }
+
         /* --- Send report when needed --- */
+        static bool     s_report_pending     = false;
+        static uint32_t s_pending_backoff_ms = 1;
+        static int64_t  s_next_retry_us      = 0;
+
+        bool retry_due     = s_report_pending && (now_us >= s_next_retry_us);
+        bool keepalive_due = (now_us > s_last_report_sent_us + 1000000LL / MIN_REPORT_RATE_HZ);
+
         bool should_send = !s_paused && (
             matrix_changed ||
+            retry_due ||
             (boot_protocol != s_last_boot_protocol) ||
-            (now_us > s_last_report_sent_us + 1000000LL / MIN_REPORT_RATE_HZ)
+            keepalive_due
         );
 
         if (should_send) {
-            s_last_report_sent_us = now_us;
-            esp_err_t result = kb_macro_send_report();
+            esp_err_t result = kb_macro_send_report_nowait();
 
             if (result == ESP_OK) {
+                s_report_pending      = false;
+                s_pending_backoff_ms  = 1;
+                s_last_report_sent_us = now_us;
+                s_last_boot_protocol  = boot_protocol;
                 s_report_count++;
                 if (s_prev_report_sent_us >= 0) {
                     int64_t interval = now_us - s_prev_report_sent_us;
@@ -465,11 +481,13 @@ static void kb_manager_task(void *arg) {
                     }
                 }
                 s_prev_report_sent_us = now_us;
+            } else {
+                s_report_pending = true;
+                s_next_retry_us  = now_us + (int64_t)s_pending_backoff_ms * 1000LL;
+                if (s_pending_backoff_ms < 16) {
+                    s_pending_backoff_ms *= 2;
+                }
             }
-
-            memcpy(s_last_matrix, s_matrix, KB_MATRIX_BITMAP_BYTES);
-            s_last_matrix_valid  = true;
-            s_last_boot_protocol = boot_protocol;
         }
 
     }

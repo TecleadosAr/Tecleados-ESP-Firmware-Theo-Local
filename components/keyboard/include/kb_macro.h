@@ -29,10 +29,28 @@ void kb_macro_virtual_release(uint8_t hid_keycode);
 uint16_t kb_macro_get_layer_mask(void);
 
 /**
- * @brief Force a report to be sent from the current virtual state
+ * @brief Purge active layer bits for layers that no longer exist in config
+ */
+void kb_macro_purge_deleted_layers(void);
+
+
+/**
+ * @brief Force a report to be sent from the current virtual state (blocking retry up to 100 ms)
  */
 #include "esp_err.h"
 esp_err_t kb_macro_send_report(void);
+
+/**
+ * @brief Send report from current virtual state with a single attempt (non-blocking).
+ * Does not block or sleep if transport is not ready.
+ */
+esp_err_t kb_macro_send_report_nowait(void);
+
+/**
+ * @brief Send report with bounded retries up to timeout_ms (1 ms per retry).
+ */
+esp_err_t kb_macro_send_report_blocking(uint32_t timeout_ms);
+
 
 /**
  * @brief Fire a single-action tap (press + delay + release) via the macro task.

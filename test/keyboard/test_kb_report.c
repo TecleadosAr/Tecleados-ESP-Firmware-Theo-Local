@@ -247,3 +247,68 @@ TEST_CASE(kb_report, blocked_stats_tracks_failed_reports) {
     TEST_ASSERT_EQUAL(6000, stats.total_blocked_us);
     TEST_ASSERT_EQUAL(3000, stats.max_blocked_us);
 }
+
+TEST_CASE(kb_report, send_report_nowait_succeeds_when_ready) {
+    mock_usb_reset();
+    _mock_usb_mounted = true;
+    _mock_ble_routing_active = false;
+    kb_macro_reset_blocked_stats();
+
+    // Ensure mutex is created
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+
+    kb_macro_virtual_press(0x04); // HID_KEY_A
+    esp_err_t err = kb_macro_send_report_nowait();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+    TEST_ASSERT_EQUAL(1, stats.total_reports);
+    TEST_ASSERT_EQUAL(0, stats.failed_reports);
+
+    kb_macro_virtual_release(0x04);
+}
+
+TEST_CASE(kb_report, send_report_nowait_fails_without_blocking) {
+    mock_usb_reset();
+    _mock_usb_mounted = false;
+    _mock_ble_routing_active = false;
+    kb_macro_reset_blocked_stats();
+
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+
+    kb_macro_virtual_press(0x05); // HID_KEY_B
+    esp_err_t err = kb_macro_send_report_nowait();
+    TEST_ASSERT(err != ESP_OK);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+    TEST_ASSERT_EQUAL(1, stats.total_reports);
+    TEST_ASSERT_EQUAL(1, stats.failed_reports);
+
+    kb_macro_virtual_release(0x05);
+}
+
+TEST_CASE(kb_report, send_report_blocking_retries_and_times_out) {
+    mock_usb_reset();
+    _mock_usb_mounted = false;
+    _mock_ble_routing_active = false;
+    kb_macro_reset_blocked_stats();
+
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+
+    esp_err_t err = kb_macro_send_report_blocking(5);
+    TEST_ASSERT(err != ESP_OK);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+    TEST_ASSERT_EQUAL(1, stats.total_reports);
+    TEST_ASSERT_EQUAL(1, stats.failed_reports);
+}
+

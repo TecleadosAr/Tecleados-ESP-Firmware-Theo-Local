@@ -46,10 +46,15 @@
 #include "../../components/comm_module/comm_crc.c"
 #include "../../components/comm_module/comm_rx.c"
 #include "../../components/config_module/cfg_system.c"
+#include "../../components/config_module/cfg_macros.c"
 #include "../../components/keyboard/kb_report.c"
 #include "../../components/keyboard/kb_telemetry.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
+__attribute__((weak)) void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
+    (void)action_code; (void)is_pressed;
+}
+#include "../../components/keyboard/kb_macro.c"
 #include "../../components/keyboard/kb_matrix.c"
 #include "../../components/config_module/cfg_layouts.c"
 #include "../../components/status_module/statusmod.c"
