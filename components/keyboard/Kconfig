@@ -1,0 +1,21 @@
+menu "TEF Keyboard Configuration"
+
+    config TEF_DEBUG_LATENCY_PIN
+        int "Latency Debug Output GPIO Pin (-1 to disable)"
+        default -1
+        range -1 48
+        help
+            GPIO pin toggled when a new keypress enters the NKRO report.
+            Connect to a logic analyzer together with the key switch
+            to measure internal matrix scanning and debouncing latency.
+            Set to -1 to disable.
+
+    config TEF_MATRIX_SETTLE_US
+        int "Matrix column settle time (microseconds)"
+        default 20
+        range 1 100
+        help
+            Delay in microseconds after asserting a column pin before reading row pins.
+            Default is 20 us (~13 us estimated RC time constant).
+
+endmenu

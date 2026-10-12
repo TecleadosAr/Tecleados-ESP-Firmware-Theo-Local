@@ -72,8 +72,10 @@ void kb_matrix_scan(uint8_t *out_matrix_bitmap, bool mirror_cols) {
 	memset(out_matrix_bitmap, 0, total_bytes);
 
 	for (size_t c = 0; c < col_count; ++c) {
-		gpio_set_level(k_cols[c].gpio, 0);
-		esp_rom_delay_us(20); // Row input settling: 45 kΩ pull-up × ~300 pF trace ≈ 13 µs to cross LOW threshold; 20 µs gives a safe margin
+#ifndef CONFIG_TEF_MATRIX_SETTLE_US
+#define CONFIG_TEF_MATRIX_SETTLE_US 20
+#endif
+		esp_rom_delay_us(CONFIG_TEF_MATRIX_SETTLE_US); // Configurable row settling: 45 kΩ pull-up × ~300 pF trace ≈ 13 µs
 
 		for (size_t r = 0; r < row_count; ++r) {
 			if (gpio_get_level(k_rows[r].gpio) == 0) {

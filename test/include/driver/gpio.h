@@ -30,3 +30,17 @@ typedef int gpio_num_t;
 #define GPIO_NUM_40 40
 #define GPIO_NUM_41 41
 #define GPIO_NUM_42 42
+
+typedef enum {
+    GPIO_MODE_DISABLE = 0,
+    GPIO_MODE_INPUT = 1,
+    GPIO_MODE_OUTPUT = 2,
+    GPIO_MODE_OUTPUT_OD = 3,
+    GPIO_MODE_INPUT_OUTPUT_OD = 4,
+    GPIO_MODE_INPUT_OUTPUT = 5,
+} gpio_mode_t;
+
+static inline int gpio_set_direction(gpio_num_t gpio_num, gpio_mode_t mode) { (void)gpio_num; (void)mode; return 0; }
+static inline int gpio_set_level(gpio_num_t gpio_num, uint32_t level) { (void)gpio_num; (void)level; return 0; }
+static inline int gpio_reset_pin(gpio_num_t gpio_num) { (void)gpio_num; return 0; }
+static inline int gpio_get_level(gpio_num_t gpio_num) { (void)gpio_num; return 0; }

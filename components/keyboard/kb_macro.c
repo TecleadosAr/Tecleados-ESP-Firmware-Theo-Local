@@ -4,6 +4,8 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -63,8 +65,18 @@ static cfg_macro_list_t  *s_macros = NULL;
 
 void kb_macro_virtual_press(uint8_t hid_keycode) {
     if (xSemaphoreTake(s_v_nkro_mutex, portMAX_DELAY)) {
+#if defined(CONFIG_TEF_DEBUG_LATENCY_PIN) && (CONFIG_TEF_DEBUG_LATENCY_PIN >= 0)
+        bool was_set = kb_bit_get(s_v_nkro, hid_keycode);
+#endif
         kb_bit_set(s_v_nkro, hid_keycode);
         xSemaphoreGive(s_v_nkro_mutex);
+#if defined(CONFIG_TEF_DEBUG_LATENCY_PIN) && (CONFIG_TEF_DEBUG_LATENCY_PIN >= 0)
+        if (!was_set) {
+            static uint8_t s_latency_pin_state = 0;
+            s_latency_pin_state ^= 1;
+            gpio_set_level((gpio_num_t)CONFIG_TEF_DEBUG_LATENCY_PIN, s_latency_pin_state);
+        }
+#endif
     }
 }
 
@@ -88,12 +100,18 @@ esp_err_t kb_macro_send_report(void) {
         return ESP_FAIL;
     }
 
+    int64_t t_start_us = esp_timer_get_time();
     esp_err_t err = ESP_FAIL;
+    int retries = 0;
     for (int i = 0; i < 100; i++) {
+        retries = i;
         err = kb_send_report(snapshot);
         if (err == ESP_OK) break;
         vTaskDelay(pdMS_TO_TICKS(1));
     }
+    int64_t blocked_us = esp_timer_get_time() - t_start_us;
+    kb_macro_track_blocked_time(blocked_us, retries, err);
+
     return err;
 }
 

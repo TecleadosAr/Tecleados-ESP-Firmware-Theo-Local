@@ -184,3 +184,66 @@ TEST_CASE(kb_report, consumer_report_via_ble) {
     TEST_ASSERT_EQUAL(ESP_OK, err);
     TEST_ASSERT_EQUAL(1, _mock_ble_send_count);
 }
+
+/* ---- Report blocked telemetry & histogram tests ---- */
+
+TEST_CASE(kb_report, blocked_stats_reset_clears_all) {
+    kb_macro_reset_blocked_stats();
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+
+    TEST_ASSERT_EQUAL(0, stats.total_reports);
+    TEST_ASSERT_EQUAL(0, stats.failed_reports);
+    TEST_ASSERT_EQUAL(0, stats.max_blocked_us);
+    TEST_ASSERT_EQUAL(0, stats.total_blocked_us);
+    for (int i = 0; i < 7; i++) {
+        TEST_ASSERT_EQUAL(0, stats.buckets[i]);
+    }
+}
+
+TEST_CASE(kb_report, blocked_stats_bucket_distribution) {
+    kb_macro_reset_blocked_stats();
+
+    /* Track values into each bucket:
+     * [0]: < 100 us       -> 50 us
+     * [1]: 100 us .. 1 ms -> 500 us
+     * [2]: 1 ms .. 5 ms   -> 2000 us
+     * [3]: 5 ms .. 20 ms  -> 10000 us
+     * [4]: 20 ms .. 50 ms -> 30000 us
+     * [5]: 50 ms .. 100 ms-> 80000 us
+     * [6]: >= 100 ms      -> 120000 us
+     */
+    kb_macro_track_blocked_time(50, 0, ESP_OK);
+    kb_macro_track_blocked_time(500, 1, ESP_OK);
+    kb_macro_track_blocked_time(2000, 2, ESP_OK);
+    kb_macro_track_blocked_time(10000, 10, ESP_OK);
+    kb_macro_track_blocked_time(30000, 30, ESP_OK);
+    kb_macro_track_blocked_time(80000, 80, ESP_OK);
+    kb_macro_track_blocked_time(120000, 100, ESP_FAIL);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+
+    TEST_ASSERT_EQUAL(7, stats.total_reports);
+    TEST_ASSERT_EQUAL(1, stats.failed_reports);
+    TEST_ASSERT_EQUAL(120000, stats.max_blocked_us);
+    for (int i = 0; i < 7; i++) {
+        TEST_ASSERT_EQUAL(1, stats.buckets[i]);
+    }
+}
+
+TEST_CASE(kb_report, blocked_stats_tracks_failed_reports) {
+    kb_macro_reset_blocked_stats();
+
+    kb_macro_track_blocked_time(1000, 1, ESP_OK);
+    kb_macro_track_blocked_time(2000, 2, ESP_FAIL);
+    kb_macro_track_blocked_time(3000, 3, ESP_ERR_TIMEOUT);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+
+    TEST_ASSERT_EQUAL(3, stats.total_reports);
+    TEST_ASSERT_EQUAL(2, stats.failed_reports);
+    TEST_ASSERT_EQUAL(6000, stats.total_blocked_us);
+    TEST_ASSERT_EQUAL(3000, stats.max_blocked_us);
+}

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites tests="127" failures="0" time="0">
+<testsuites tests="130" failures="0" time="0">
   <testsuite name="kb_state" tests="8" failures="0">
     <testcase name="init_sets_zero" classname="kb_state" time="0.0000"/>
     <testcase name="update_caps_lock" classname="kb_state" time="0.0000"/>
@@ -10,7 +10,7 @@
     <testcase name="transition_between_different_states" classname="kb_state" time="0.0000"/>
     <testcase name="all_leds_on" classname="kb_state" time="0.0000"/>
   </testsuite>
-  <testsuite name="kb_report" tests="15" failures="0">
+  <testsuite name="kb_report" tests="18" failures="0">
     <testcase name="send_report_empty_nkro" classname="kb_report" time="0.0000"/>
     <testcase name="send_report_single_key" classname="kb_report" time="0.0000"/>
     <testcase name="send_report_modifier_only" classname="kb_report" time="0.0000"/>
@@ -26,6 +26,9 @@
     <testcase name="send_report_fails_when_ble_disconnected" classname="kb_report" time="0.0000"/>
     <testcase name="consumer_report_via_usb" classname="kb_report" time="0.0000"/>
     <testcase name="consumer_report_via_ble" classname="kb_report" time="0.0000"/>
+    <testcase name="blocked_stats_reset_clears_all" classname="kb_report" time="0.0000"/>
+    <testcase name="blocked_stats_bucket_distribution" classname="kb_report" time="0.0000"/>
+    <testcase name="blocked_stats_tracks_failed_reports" classname="kb_report" time="0.0000"/>
   </testsuite>
   <testsuite name="kb_layout" tests="15" failures="0">
     <testcase name="factory_base_layer_escape" classname="kb_layout" time="0.0000"/>

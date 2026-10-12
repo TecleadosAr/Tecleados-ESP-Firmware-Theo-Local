@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "driver/gpio.h"
 
 #include "kb_manager.h"
 
@@ -345,6 +346,15 @@ static void kb_manager_task(void *arg) {
                          (unsigned long)(peak_scan_hz <= 1000 ? peak_scan_hz : 1000));
             }
 
+            kb_report_blocked_stats_t b_stats;
+            kb_macro_get_blocked_stats(&b_stats);
+            if (b_stats.total_reports > 0 && b_stats.max_blocked_us > 1000) {
+                ESP_LOGW(TAG, "Report block telemetry: max=%lld us, failed=%lu/%lu",
+                         (long long)b_stats.max_blocked_us,
+                         (unsigned long)b_stats.failed_reports,
+                         (unsigned long)b_stats.total_reports);
+            }
+
             s_scan_count             = 0;
             s_report_count           = 0;
             s_min_report_interval_us = LLONG_MAX;
@@ -484,6 +494,12 @@ void kb_manager_start(void) {
     memset(s_remote_matrix,   0, sizeof(s_remote_matrix));
     comm_register_module(MODULE_SYSTEM, kb_system_usb_callback);
     kb_matrix_gpio_init();
+
+#if defined(CONFIG_TEF_DEBUG_LATENCY_PIN) && (CONFIG_TEF_DEBUG_LATENCY_PIN >= 0)
+    gpio_reset_pin((gpio_num_t)CONFIG_TEF_DEBUG_LATENCY_PIN);
+    gpio_set_direction((gpio_num_t)CONFIG_TEF_DEBUG_LATENCY_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)CONFIG_TEF_DEBUG_LATENCY_PIN, 0);
+#endif
 
     vTaskDelay(pdMS_TO_TICKS(500)); // Allow USB/GPIO to settle before scanning
 

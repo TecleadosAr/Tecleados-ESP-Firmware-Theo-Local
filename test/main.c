@@ -47,6 +47,7 @@
 #include "../../components/comm_module/comm_rx.c"
 #include "../../components/config_module/cfg_system.c"
 #include "../../components/keyboard/kb_report.c"
+#include "../../components/keyboard/kb_telemetry.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
 #include "../../components/config_module/cfg_layouts.c"
