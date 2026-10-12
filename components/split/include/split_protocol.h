@@ -98,6 +98,9 @@ typedef struct __attribute__((packed)) split_discovery_payload {
     uint16_t firmware_version;  // For compatibility checks
 } split_discovery_payload_t;
 
+_Static_assert(sizeof(split_discovery_payload_t) == 10,
+               "split_discovery_payload_t must be exactly 10 bytes");
+
 /** SPLIT_MSG_PAIR_REQUEST / SPLIT_MSG_PAIR_RESPONSE — key exchange. Unencrypted. */
 typedef struct __attribute__((packed)) split_pair_payload {
     uint8_t  device_id[6];      // Sender's MAC
@@ -127,6 +130,9 @@ typedef struct __attribute__((packed)) split_role_negotiate_payload {
     uint32_t random_salt;        // PER-SESSION SALT for transient session key derivation
 } split_role_negotiate_payload_t;
 
+_Static_assert(sizeof(split_role_negotiate_payload_t) == 18,
+               "split_role_negotiate_payload_t must be exactly 18 bytes");
+
 /** SPLIT_MSG_KEY_STATE_FULL — complete matrix snapshot. */
 typedef struct __attribute__((packed)) split_key_state_full_payload {
     uint8_t  active_layer;                  // Current active layer on sender
@@ -151,6 +157,9 @@ typedef struct __attribute__((packed)) split_heartbeat_payload {
                                 // Slave fills this; Master echoes it back unchanged
                                 // so Slave can compute RTT = (now - sent_us) / 2.
 } split_heartbeat_payload_t;
+
+_Static_assert(sizeof(split_heartbeat_payload_t) == 9,
+               "split_heartbeat_payload_t must be exactly 9 bytes");
 
 // Max data bytes per CONFIG_SYNC fragment
 // SPLIT_MAX_PAYLOAD(240) - kind(1) - key(12) - fragment_idx(1) - fragment_total(1) = 225

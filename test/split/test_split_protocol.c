@@ -299,20 +299,55 @@ TEST_CASE(split_protocol, heartbeat_payload_version_matches) {
     TEST_ASSERT_EQUAL(9, (int)sizeof(split_heartbeat_payload_t));
 }
 
-TEST_CASE(split_protocol, version_mismatch_detected) {
-    split_heartbeat_payload_t hb_old = {
-        .proto_version = 0x01, /* Incompatible version */
-        .state         = 4,
-        .role          = 1,
-    };
-    bool is_compatible = (hb_old.proto_version == SPLIT_PROTO_VERSION);
-    TEST_ASSERT_FALSE(is_compatible);
+TEST_CASE(split_protocol, role_negotiate_valid_version_accepted) {
+    uint8_t own_mac[6]  = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    uint8_t peer_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x02};
 
-    split_heartbeat_payload_t hb_current = {
-        .proto_version = SPLIT_PROTO_VERSION,
-        .state         = 4,
-        .role          = 1,
+    split_role_negotiate_payload_t rn = {
+        .proto_version        = SPLIT_PROTO_VERSION,
+        .proposed_role        = 0,
+        .usb_connected        = 0,
+        .ble_connected_bitmap = 0,
+        .selected_profile     = 0,
+        .has_unsynced_ble     = 0,
+        .last_role            = 0,
+        .random_salt          = 0x1234,
     };
-    is_compatible = (hb_current.proto_version == SPLIT_PROTO_VERSION);
-    TEST_ASSERT_TRUE(is_compatible);
+    memcpy(rn.device_id, peer_mac, 6);
+
+    split_role_t decided_role = SPLIT_ROLE_NONE;
+    esp_err_t err = split_role_on_negotiate(peer_mac, (const uint8_t *)&rn, sizeof(rn),
+                                            own_mac, true /* own_usb_connected */, 0, false,
+                                            SPLIT_ROLE_NONE, &decided_role);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL(SPLIT_ROLE_MASTER, decided_role);
+}
+
+TEST_CASE(split_protocol, role_negotiate_mismatch_version_rejected) {
+    uint8_t own_mac[6]  = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    uint8_t peer_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x02};
+
+    split_role_negotiate_payload_t rn = {
+        .proto_version = 0x01, /* Incompatible version */
+        .proposed_role = 0,
+    };
+    memcpy(rn.device_id, peer_mac, 6);
+
+    split_role_t decided_role = SPLIT_ROLE_NONE;
+    esp_err_t err = split_role_on_negotiate(peer_mac, (const uint8_t *)&rn, sizeof(rn),
+                                            own_mac, true, 0, false,
+                                            SPLIT_ROLE_NONE, &decided_role);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_VERSION, err);
+}
+
+TEST_CASE(split_protocol, role_negotiate_truncated_payload_rejected) {
+    uint8_t own_mac[6]  = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    uint8_t peer_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x02};
+
+    uint8_t short_payload[10] = {SPLIT_PROTO_VERSION};
+    split_role_t decided_role = SPLIT_ROLE_NONE;
+    esp_err_t err = split_role_on_negotiate(peer_mac, short_payload, sizeof(short_payload),
+                                            own_mac, true, 0, false,
+                                            SPLIT_ROLE_NONE, &decided_role);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, err);
 }

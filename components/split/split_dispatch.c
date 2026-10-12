@@ -97,7 +97,9 @@ static void handle_role_negotiate_msg(const uint8_t *src_mac, const uint8_t *pay
     if (p->proto_version != SPLIT_PROTO_VERSION) {
         ESP_LOGE(TAG, "ROLE_NEGOTIATE proto version mismatch: peer=%u, us=%u",
                  p->proto_version, SPLIT_PROTO_VERSION);
+        split_task_handle_disconnect("version mismatch");
         split_session_set_state(SPLIT_STATE_VERSION_MISMATCH);
+        esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_VERSION_MISMATCH, NULL, 0, 0);
         return;
     }
 
@@ -258,7 +260,9 @@ static void handle_heartbeat_msg(const uint8_t *payload, size_t len)
     if (hb->proto_version != SPLIT_PROTO_VERSION) {
         ESP_LOGE(TAG, "HEARTBEAT proto version mismatch: peer=%u, us=%u",
                  hb->proto_version, SPLIT_PROTO_VERSION);
+        split_task_handle_disconnect("version mismatch");
         split_session_set_state(SPLIT_STATE_VERSION_MISMATCH);
+        esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_VERSION_MISMATCH, NULL, 0, 0);
         return;
     }
 

@@ -279,3 +279,22 @@ TEST_CASE(status_module, split_connected_and_disconnected) {
     TEST_ASSERT_EQUAL((uint8_t)SPLIT_STATE_DISCONNECTED, msg->split_state);
     TEST_ASSERT_EQUAL((uint8_t)SPLIT_ROLE_NONE, msg->split_role);
 }
+
+TEST_CASE(status_module, split_version_mismatch_event_updates_state) {
+    /* Initially connected */
+    split_peer_info_t peer = { .role = SPLIT_ROLE_SLAVE };
+    post_and_dispatch_split(SPLIT_EVENT_CONNECTED, &peer, sizeof(peer));
+
+    const statusmod_msg_t *msg1 = get_last_status();
+    TEST_ASSERT_NOT_NULL(msg1);
+    TEST_ASSERT_EQUAL((uint8_t)SPLIT_STATE_CONNECTED, msg1->split_state);
+
+    /* Post version mismatch event */
+    _mock_comm_last_len = 0;
+    post_and_dispatch_split(SPLIT_EVENT_VERSION_MISMATCH, NULL, 0);
+
+    const statusmod_msg_t *msg2 = get_last_status();
+    TEST_ASSERT_NOT_NULL(msg2);
+    TEST_ASSERT_EQUAL((uint8_t)SPLIT_STATE_VERSION_MISMATCH, msg2->split_state);
+    TEST_ASSERT_EQUAL((uint8_t)SPLIT_ROLE_NONE, msg2->split_role);
+}

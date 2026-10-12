@@ -154,6 +154,10 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
                                    ? 0xFF : (uint8_t)bst->pairing_profile;
         break;
     }
+    case SPLIT_EVENT_VERSION_MISMATCH:
+        s_cache.split_state = (uint8_t)SPLIT_STATE_VERSION_MISMATCH;
+        s_cache.split_role  = (uint8_t)SPLIT_ROLE_NONE;
+        break;
     case SPLIT_EVENT_STALE:
     case SPLIT_EVENT_STALE_RECOVERED:
         // State hasn't changed — just re-push so configurator sees it
@@ -177,6 +181,10 @@ static bool status_module_callback(comm_transport_t source, uint8_t *data, uint1
         int pairing = ble_hid_get_pairing_profile();
         s_cache.pairing_profile = (pairing < 0) ? 0xFF : (uint8_t)pairing;
     }
+
+    split_status_t sst = splitmod_get_status();
+    s_cache.split_state = (uint8_t)sst.state;
+    s_cache.split_role  = (uint8_t)sst.role;
 
     send_status_push();
     return true;
