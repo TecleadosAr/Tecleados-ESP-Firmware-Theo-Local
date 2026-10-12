@@ -164,6 +164,10 @@ static void IRAM_ATTR kb_matrix_isr_handler(void *arg) {
 
 void kb_matrix_init_isr(TaskHandle_t task_to_notify) {
 	s_task_to_notify = task_to_notify;
+	esp_err_t isr_err = gpio_install_isr_service(0);
+	if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
+		ESP_LOGW(TAG, "gpio_install_isr_service: %s", esp_err_to_name(isr_err));
+	}
 	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
 	for (size_t i = 0; i < row_count; ++i) {
 		gpio_isr_handler_add(k_rows[i].gpio, kb_matrix_isr_handler, (void *)k_rows[i].gpio);

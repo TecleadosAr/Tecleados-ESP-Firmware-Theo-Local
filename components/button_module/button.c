@@ -125,7 +125,10 @@ void button_init(button_callback_t on_single_press, button_callback_t on_double_
     xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
 
     // Servicio ISR y registro del handler
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    esp_err_t isr_err = gpio_install_isr_service(0);
+    if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(isr_err);
+    }
     ESP_ERROR_CHECK(gpio_isr_handler_add(BOOT_BUTTON, gpio_isr_handler, (void *)BOOT_BUTTON));
 
     ESP_LOGI(TAG, "Listo para recibir BOOT.");
