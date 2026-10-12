@@ -134,6 +134,7 @@ void comm_tx_blast_handle_bitmap(const uint8_t *packet, uint16_t len) {
         ESP_LOGI(TAG, "Blast: retransmitted gaps, sending STATUS_REQ round %u", s_tx_blast_reconcile_attempts);
         comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_STATUS_REQ, 0, 0, NULL);
         s_tx_last_packet_timestamp_us = esp_timer_get_time();
+        comm_timeout_reschedule();
         s_tx_awaiting_response = true;
     }
 }
@@ -161,6 +162,7 @@ static bool tx_send_packet_by_index(uint16_t index) {
     }
 
     s_tx_last_packet_timestamp_us = esp_timer_get_time();
+    comm_timeout_reschedule();
     return true;
 }
 
@@ -264,6 +266,7 @@ void comm_erase_tx_buffer(void) {
     s_tx_buf_idx = 0;
     s_tx_buf_last_packet_sent_idx = 0;
     s_tx_last_packet_timestamp_us = 0;
+    comm_timeout_reschedule();
     s_tx_awaiting_response = false;
     s_tx_nak_resend_attempts = 0;
     s_tx_blast_mode_flag = false;
@@ -309,6 +312,7 @@ static bool tx_send_next_packet(void) {
 
     s_tx_buf_idx += stripped_payload_len;
     s_tx_last_packet_timestamp_us = esp_timer_get_time();
+    comm_timeout_reschedule();
     return true;
 }
 

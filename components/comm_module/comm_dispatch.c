@@ -127,7 +127,54 @@ static void process_incoming_packet(comm_transport_t source, const uint8_t *raw_
     }
 }
 
+#define COMM_CTRL_MSG_TIMEOUT 0xFF
+
+static esp_timer_handle_t s_comm_timeout_timer = NULL;
+
+static void comm_timeout_timer_cb(void *arg) {
+    (void)arg;
+    if (s_comm_message_buffer != NULL) {
+        uint8_t ctrl = COMM_CTRL_MSG_TIMEOUT;
+        xMessageBufferSend(s_comm_message_buffer, &ctrl, sizeof(ctrl), 0);
+    }
+}
+
+void comm_timeout_reschedule(void) {
+    if (s_comm_timeout_timer == NULL) return;
+
+    if (esp_timer_is_active(s_comm_timeout_timer)) {
+        esp_timer_stop(s_comm_timeout_timer);
+    }
+
+    uint64_t now_us = esp_timer_get_time();
+    uint64_t rx_last = comm_rx_get_last_packet_timestamp_us();
+    uint64_t tx_last = comm_tx_get_last_packet_timestamp_us();
+
+    if (rx_last == 0 && tx_last == 0) {
+        return;
+    }
+
+    uint64_t min_deadline = 0;
+    if (rx_last > 0) {
+        min_deadline = rx_last + ((uint64_t)RX_TIMEOUT_MS * 1000);
+    }
+    if (tx_last > 0) {
+        uint64_t tx_deadline = tx_last + ((uint64_t)TX_TIMEOUT_MS * 1000);
+        if (min_deadline == 0 || tx_deadline < min_deadline) {
+            min_deadline = tx_deadline;
+        }
+    }
+
+    uint64_t delay_us = 1000;
+    if (min_deadline > now_us) {
+        delay_us = min_deadline - now_us;
+    }
+
+    esp_timer_start_once(s_comm_timeout_timer, delay_us);
+}
+
 static void comm_processing_task(void *pvParameters) {
+    (void)pvParameters;
     uint8_t buffer[COMM_MAX_PACKET_SIZE + 1];
     while (1) {
         size_t received = xMessageBufferReceive(s_comm_message_buffer, buffer, sizeof(buffer), portMAX_DELAY);
@@ -136,26 +183,25 @@ static void comm_processing_task(void *pvParameters) {
             s_current_source = source;
             process_incoming_packet(source, &buffer[1], received - 1);
             s_current_source = COMM_TRANSPORT_NONE;
-        }
-    }
-}
+            comm_timeout_reschedule();
+        } else if (received == 1) {
+            if (buffer[0] == COMM_CTRL_MSG_TIMEOUT) {
+                uint64_t now_us = esp_timer_get_time();
 
-static void comm_timeouts_task(void *pvParameters) {
-    while (1) {
-        uint64_t now_us = esp_timer_get_time();
-        
-        uint64_t rx_last = comm_rx_get_last_packet_timestamp_us();
-        if (rx_last > 0 && (now_us - rx_last) > RX_TIMEOUT_MS * 1000) {
-            comm_erase_rx_buffer();
-            comm_session_unlock();
+                uint64_t rx_last = comm_rx_get_last_packet_timestamp_us();
+                if (rx_last > 0 && (now_us - rx_last) >= ((uint64_t)RX_TIMEOUT_MS * 1000)) {
+                    comm_erase_rx_buffer();
+                    comm_session_unlock();
+                }
+
+                uint64_t tx_last = comm_tx_get_last_packet_timestamp_us();
+                if (tx_last > 0 && (now_us - tx_last) >= ((uint64_t)TX_TIMEOUT_MS * 1000)) {
+                    comm_erase_tx_buffer();
+                }
+
+                comm_timeout_reschedule();
+            }
         }
-        
-        uint64_t tx_last = comm_tx_get_last_packet_timestamp_us();
-        if (tx_last > 0 && (now_us - tx_last) > TX_TIMEOUT_MS * 1000) {
-            comm_erase_tx_buffer();
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -168,8 +214,16 @@ void comm_dispatch_init(void) {
         return;
     }
     
+    const esp_timer_create_args_t timer_args = {
+        .callback = comm_timeout_timer_cb,
+        .name = "comm_timeout",
+    };
+    esp_err_t err = esp_timer_create(&timer_args, &s_comm_timeout_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create comm timeout timer: %s", esp_err_to_name(err));
+    }
+
     xTaskCreateWithCaps(comm_processing_task, "comm_proc_task", 8192, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    xTaskCreateWithCaps(comm_timeouts_task, "comm_timeout_task", 4096, NULL, 5, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 void comm_dispatch_enqueue(comm_transport_t source, const uint8_t *packet, uint16_t len) {

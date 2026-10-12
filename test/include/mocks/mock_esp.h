@@ -53,6 +53,11 @@ typedef enum {
 #define ESP_LOGD(tag, fmt, ...) (void)0
 #define ESP_LOGV(tag, fmt, ...) (void)0
 
+static inline const char *esp_err_to_name(esp_err_t code) {
+    (void)code;
+    return "ESP_OK";
+}
+
 /* ---- esp_timer.h ---- */
 
 static int64_t _mock_timer_us = 0;
@@ -67,6 +72,56 @@ static inline void mock_timer_set(int64_t us) {
 
 static inline void mock_timer_advance(int64_t delta_us) {
     _mock_timer_us += delta_us;
+}
+
+typedef struct esp_timer {
+    void (*callback)(void *arg);
+    void *arg;
+    int64_t fire_time_us;
+    bool active;
+    bool periodic;
+    uint64_t period_us;
+} *esp_timer_handle_t;
+
+typedef struct {
+    void (*callback)(void *arg);
+    void *arg;
+    const char *name;
+    bool skip_unhandled_events;
+} esp_timer_create_args_t;
+
+static inline esp_err_t esp_timer_create(const esp_timer_create_args_t *args, esp_timer_handle_t *out_handle) {
+    if (!args || !out_handle) return ESP_ERR_INVALID_ARG;
+    esp_timer_handle_t t = (esp_timer_handle_t)calloc(1, sizeof(struct esp_timer));
+    t->callback = args->callback;
+    t->arg = args->arg;
+    t->active = false;
+    *out_handle = t;
+    return ESP_OK;
+}
+
+static inline esp_err_t esp_timer_start_once(esp_timer_handle_t timer, uint64_t timeout_us) {
+    if (!timer) return ESP_ERR_INVALID_ARG;
+    timer->active = true;
+    timer->periodic = false;
+    timer->fire_time_us = _mock_timer_us + timeout_us;
+    return ESP_OK;
+}
+
+static inline esp_err_t esp_timer_stop(esp_timer_handle_t timer) {
+    if (!timer) return ESP_ERR_INVALID_ARG;
+    timer->active = false;
+    return ESP_OK;
+}
+
+static inline bool esp_timer_is_active(esp_timer_handle_t timer) {
+    return timer ? timer->active : false;
+}
+
+static inline esp_err_t esp_timer_delete(esp_timer_handle_t timer) {
+    if (!timer) return ESP_ERR_INVALID_ARG;
+    free(timer);
+    return ESP_OK;
 }
 
 /* ---- esp_heap_caps.h ---- */
