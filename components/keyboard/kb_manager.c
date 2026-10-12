@@ -236,6 +236,10 @@ static void kb_manager_task(void *arg) {
 
     const int64_t min_scan_interval_us = 1000000LL / (int64_t)MAX_POLLING_RATE_HZ;
 
+    bool     s_report_pending     = false;
+    uint32_t s_pending_backoff_ms = 1;
+    int64_t  s_next_retry_us      = 0;
+
     while (1) {
         int64_t now_us    = esp_timer_get_time();
         int64_t elapsed_us = now_us - s_seconds_timer;
@@ -243,9 +247,10 @@ static void kb_manager_task(void *arg) {
         /* Rate-limit scanning to MAX_POLLING_RATE_HZ / s_scan_divisor */
         int64_t effective_interval_us = min_scan_interval_us * (int64_t)s_scan_divisor;
         if (now_us - s_last_scan_us < effective_interval_us) {
-            /* If no keys are held, sleep in interrupt mode until a key wakes us.
-             * s_matrix_nonempty is updated after every debounce; use the cached value. */
-            if (!s_matrix_nonempty && !s_paused && !s_force_active) {
+            /* If no keys are held and no report is pending delivery, sleep in interrupt
+             * mode until a key wakes us. s_matrix_nonempty is updated after every debounce;
+             * use the cached value. */
+            if (!s_matrix_nonempty && !s_report_pending && !s_paused && !s_force_active) {
                 bool injected_empty = true;
                 portENTER_CRITICAL(&s_injected_matrix_lock);
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
@@ -451,12 +456,8 @@ static void kb_manager_task(void *arg) {
         }
 
         /* --- Send report when needed --- */
-        static bool     s_report_pending     = false;
-        static uint32_t s_pending_backoff_ms = 1;
-        static int64_t  s_next_retry_us      = 0;
-
         bool retry_due     = s_report_pending && (now_us >= s_next_retry_us);
-        bool keepalive_due = (now_us > s_last_report_sent_us + 1000000LL / MIN_REPORT_RATE_HZ);
+        bool keepalive_due = !s_report_pending && (now_us > s_last_report_sent_us + 1000000LL / MIN_REPORT_RATE_HZ);
 
         bool should_send = !s_paused && (
             matrix_changed ||

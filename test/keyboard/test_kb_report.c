@@ -312,3 +312,78 @@ TEST_CASE(kb_report, send_report_blocking_retries_and_times_out) {
     TEST_ASSERT_EQUAL(1, stats.failed_reports);
 }
 
+TEST_CASE(kb_report, send_report_nowait_zero_retry_on_failure) {
+    mock_usb_reset();
+    _mock_usb_mounted = false;
+    _mock_ble_routing_active = false;
+    kb_macro_reset_blocked_stats();
+
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+
+    int64_t t0 = esp_timer_get_time();
+    esp_err_t err = kb_macro_send_report_nowait();
+    int64_t elapsed = esp_timer_get_time() - t0;
+
+    TEST_ASSERT(err != ESP_OK);
+    // nowait must fail immediately without spinning or delays
+    TEST_ASSERT(elapsed < 1000);
+
+    kb_report_blocked_stats_t stats;
+    kb_macro_get_blocked_stats(&stats);
+    TEST_ASSERT_EQUAL(1, stats.total_reports);
+    TEST_ASSERT_EQUAL(1, stats.failed_reports);
+}
+
+TEST_CASE(kb_report, report_pending_backoff_simulation) {
+    bool s_report_pending = false;
+    uint32_t s_pending_backoff_ms = 1;
+    int64_t s_next_retry_us = 0;
+    int64_t now_us = 1000000LL;
+    int64_t s_last_report_sent_us = 0; // >1s ago, keepalive would be due normally
+
+    // 1. Initial key release failed
+    s_report_pending = true;
+    s_next_retry_us = now_us + (int64_t)s_pending_backoff_ms * 1000LL;
+    if (s_pending_backoff_ms < 16) s_pending_backoff_ms *= 2;
+
+    // While report is pending, keepalive MUST NOT fire
+    const uint32_t min_report_rate_hz = 1;
+    bool keepalive_due = !s_report_pending && (now_us > s_last_report_sent_us + 1000000LL / min_report_rate_hz);
+    TEST_ASSERT_EQUAL(false, keepalive_due);
+
+    // Advance 500 us: retry not due yet
+    now_us += 500;
+    bool retry_due = s_report_pending && (now_us >= s_next_retry_us);
+    TEST_ASSERT_EQUAL(false, retry_due);
+
+    // Advance to 1000 us (1 ms): retry due!
+    now_us += 500;
+    retry_due = s_report_pending && (now_us >= s_next_retry_us);
+    TEST_ASSERT_EQUAL(true, retry_due);
+
+    // Simulate second failure: backoff doubles to 4
+    TEST_ASSERT_EQUAL(2, s_pending_backoff_ms);
+    s_next_retry_us = now_us + (int64_t)s_pending_backoff_ms * 1000LL;
+    s_pending_backoff_ms *= 2;
+    TEST_ASSERT_EQUAL(4, s_pending_backoff_ms);
+
+    // Simulate repeated failures up to clamp at 16 ms
+    for (int i = 0; i < 5; i++) {
+        now_us = s_next_retry_us;
+        s_next_retry_us = now_us + (int64_t)s_pending_backoff_ms * 1000LL;
+        if (s_pending_backoff_ms < 16) s_pending_backoff_ms *= 2;
+    }
+    TEST_ASSERT_EQUAL(16, s_pending_backoff_ms);
+
+    // Simulate success on reconnect
+    s_report_pending = false;
+    s_pending_backoff_ms = 1;
+    s_last_report_sent_us = now_us;
+
+    TEST_ASSERT_EQUAL(false, s_report_pending);
+    TEST_ASSERT_EQUAL(1, s_pending_backoff_ms);
+}
+
+

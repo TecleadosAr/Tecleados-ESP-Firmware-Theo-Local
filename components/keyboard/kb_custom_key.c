@@ -49,10 +49,10 @@ static void process_pr(const cfg_custom_key_t *ck, bool is_pressed) {
         /* Sustain mode: hold the press action for as long as the key is held */
         if (is_pressed) {
             kb_macro_process_action((uint16_t)ck->rules.pr.press_action, true);
-            kb_macro_send_report();
+            kb_macro_send_report_nowait();
         } else {
             kb_macro_process_action((uint16_t)ck->rules.pr.press_action, false);
-            kb_macro_send_report();
+            kb_macro_send_report_nowait();
             /* Fire the release action normally after the sustained press ends */
             if (ck->rules.pr.release_action) {
                 fire_pr_tap((uint16_t)ck->rules.pr.release_action,
@@ -116,7 +116,7 @@ static void ckey_action_event_handler(void *arg, esp_event_base_t base,
         if (ck->rules.ma.hold_sustain) {
             /* Sustain: press and hold until physical key release */
             kb_macro_process_action((uint16_t)ck->rules.ma.hold_action, true);
-            kb_macro_send_report();
+            kb_macro_send_report_nowait();
             s_ma_hold_sustained[ckey_id] = true;
         } else {
             fire_pr_tap((uint16_t)ck->rules.ma.hold_action,
@@ -126,7 +126,7 @@ static void ckey_action_event_handler(void *arg, esp_event_base_t base,
     case KB_EV_RELEASE:
         if (s_ma_hold_sustained[ckey_id]) {
             kb_macro_process_action((uint16_t)ck->rules.ma.hold_action, false);
-            kb_macro_send_report();
+            kb_macro_send_report_nowait();
             s_ma_hold_sustained[ckey_id] = false;
         }
         break;
