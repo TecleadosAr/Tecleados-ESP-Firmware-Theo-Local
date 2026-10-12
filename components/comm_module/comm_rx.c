@@ -240,6 +240,7 @@ void comm_erase_rx_buffer(void) {
     s_rx_buf_len = 0;
     s_rx_last_packet_timestamp_us = 0;
     rx_blast_reset();
+    comm_timeout_reschedule();
 }
 
 uint64_t comm_rx_get_last_packet_timestamp_us(void) {

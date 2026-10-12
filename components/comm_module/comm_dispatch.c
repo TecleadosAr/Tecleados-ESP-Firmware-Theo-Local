@@ -135,7 +135,11 @@ static void comm_timeout_timer_cb(void *arg) {
     (void)arg;
     if (s_comm_message_buffer != NULL) {
         uint8_t ctrl = COMM_CTRL_MSG_TIMEOUT;
-        xMessageBufferSend(s_comm_message_buffer, &ctrl, sizeof(ctrl), 0);
+        size_t sent = xMessageBufferSend(s_comm_message_buffer, &ctrl, sizeof(ctrl), 0);
+        if (sent == 0 && s_comm_timeout_timer != NULL) {
+            // Message buffer saturated: retry in 10ms so timeout is not permanently lost
+            esp_timer_start_once(s_comm_timeout_timer, 10000);
+        }
     }
 }
 

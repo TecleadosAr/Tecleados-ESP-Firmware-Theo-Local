@@ -54,6 +54,8 @@
 __attribute__((weak)) void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
     (void)action_code; (void)is_pressed;
 }
+__attribute__((weak)) void comm_timeout_reschedule(void) {
+}
 #include "../../components/keyboard/kb_macro.c"
 #include "../../components/keyboard/kb_matrix.c"
 #include "../../components/config_module/cfg_layouts.c"
