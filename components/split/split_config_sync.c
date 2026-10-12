@@ -249,7 +249,7 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
             cfg_macro_index_t midx = {0};
             size_t midx_len = sizeof(midx);
             if (cfgmod_read_storage(kind, key, &midx, &midx_len) == ESP_OK) {
-                for (uint16_t j = 0; j < 64; j++) {
+                for (uint16_t j = 0; j < CFG_MACROS_MAX_COUNT; j++) {
                     if (midx.active_mask & (1ULL << j)) {
                         char sub_key[16];
                         snprintf(sub_key, sizeof(sub_key), "mac_%u", j);
@@ -261,9 +261,9 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
             cfg_ckey_index_t cidx = {0};
             size_t cidx_len = sizeof(cidx);
             if (cfgmod_read_storage(kind, key, &cidx, &cidx_len) == ESP_OK) {
-                for (uint16_t j = 0; j < 64; j++) {
+                for (uint16_t j = 0; j < CFG_CKEYS_MAX_COUNT; j++) {
                     if (cidx.mask[j / 8] & (1u << (j % 8))) {
-                        char sub_key[12];
+                        char sub_key[16];
                         snprintf(sub_key, sizeof(sub_key), "ck_%u", j);
                         split_config_sync_push(peer_mac, get_seq, kind, sub_key);
                     }
@@ -273,7 +273,7 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
             cfg_combo_index_t cmbidx = {0};
             size_t cmbidx_len = sizeof(cmbidx);
             if (cfgmod_read_storage(kind, key, &cmbidx, &cmbidx_len) == ESP_OK) {
-                for (uint16_t j = 0; j < 32; j++) {
+                for (uint16_t j = 0; j < CFG_COMBOS_MAX_COUNT; j++) {
                     if (cmbidx.active_mask & (1u << j)) {
                         char sub_key[16];
                         snprintf(sub_key, sizeof(sub_key), "cmb_%u", j);
@@ -290,6 +290,7 @@ esp_err_t split_config_sync_push_kind(const uint8_t *peer_mac, split_seq_alloc_f
 esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn_t get_seq)
 {
     ESP_LOGI(TAG, "pushing main config kinds to slave");
+    int64_t start_us = esp_timer_get_time();
 
     // Use a bool[256] instead of a uint32_t bitmask: shifting by kind >= 32 is
     // undefined behaviour in C, and cfgmod_kind_t is not bounded to < 32.
@@ -301,6 +302,9 @@ esp_err_t split_config_sync_push_all(const uint8_t *peer_mac, split_seq_alloc_fn
         split_config_sync_push_kind(peer_mac, get_seq, kind);
         pushed[(uint8_t)kind] = true;
     }
+
+    int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
+    ESP_LOGI(TAG, "split_config_sync_push_all completed in %lld ms", (long long)elapsed_ms);
 
     return ESP_OK;
 }

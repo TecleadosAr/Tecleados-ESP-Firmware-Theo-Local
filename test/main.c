@@ -61,6 +61,7 @@
 #include "../../components/split/split_protocol.c"
 #include "../../components/split/split_crypto.c"
 #include "../../components/split/split_role.c"
+#include "../../components/split/split_config_sync.c"
 #endif
 
 #undef TAG
@@ -88,6 +89,7 @@
 #ifndef _MSC_VER
 #include "split/test_split_protocol.c"
 #include "split/test_split_crypto.c"
+#include "split/test_split_config_sync.c"
 #endif
 
 int main(int argc, char *argv[]) {

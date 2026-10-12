@@ -22,11 +22,13 @@ typedef struct {
     cfg_ble_profile_t profiles[CFG_BLE_MAX_PROFILES];
     uint8_t selected_profile;
     bool ble_routing_enabled;
+    uint32_t sync_version;
 } cfg_ble_state_t;
 
 static cfg_ble_state_t _mock_ble_state = {
     .selected_profile = 0,
     .ble_routing_enabled = false,
+    .sync_version = 0,
 };
 
 static inline const cfg_ble_state_t *cfg_ble_get_state(void) {
@@ -49,3 +51,7 @@ static inline void mock_ble_state_set(uint8_t profile, bool ble_routing) {
     _mock_ble_state.selected_profile = profile;
     _mock_ble_state.ble_routing_enabled = ble_routing;
 }
+
+static inline void cfg_ble_clear_unsynced(void) {
+}
+

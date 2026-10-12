@@ -1,4 +1,6 @@
 #pragma once
+#ifndef _CFGMOD_H_
+#define _CFGMOD_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -113,3 +115,5 @@ esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
 
 // Delete a blob from NVS for a kind/key pair.
 esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key);
+
+#endif // _CFGMOD_H_

@@ -3,6 +3,8 @@
  * @brief Mock stubs for cfgmod API used by cfg_layouts.c, cfg_system.c and statusmod.c.
  */
 #pragma once
+#ifndef _CFGMOD_H_
+#define _CFGMOD_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,7 +15,7 @@
 
 #define CFGMOD_MAX_KEY_LEN 12
 
-typedef enum cfgmod_kind {
+typedef enum cfgmod_kind : uint8_t {
     CFGMOD_KIND_LAYOUT = 0,
     CFGMOD_KIND_MACRO,
     CFGMOD_KIND_CONNECTION,
@@ -26,7 +28,7 @@ typedef enum cfgmod_kind {
     CFGMOD_KIND_MAX
 } cfgmod_kind_t;
 
-typedef enum cfgmod_key_id {
+typedef enum cfgmod_key_id : uint8_t {
     CFG_KEY_TEST = 0,
     CFG_KEY_HELLO,
     CFG_KEY_PHYSICAL_LAYOUT,
@@ -55,7 +57,7 @@ typedef esp_err_t (*cfgmod_validate_fn)(void *in_struct);
 /* ---- Mock NVS storage ---- */
 
 #define MOCK_NVS_MAX_ENTRIES 32
-#define MOCK_NVS_MAX_SIZE    4096
+#define MOCK_NVS_MAX_SIZE    8192
 
 typedef struct {
     cfgmod_kind_t kind;
@@ -183,3 +185,5 @@ static inline esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *ke
 }
 
 static inline bool cfg_is_init(void) { return true; }
+
+#endif // _CFGMOD_H_
