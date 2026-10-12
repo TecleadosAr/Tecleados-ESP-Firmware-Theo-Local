@@ -1,355 +1,376 @@
 # Plan Integral de Implementación: Evolución Arquitectónica del Firmware (TEF)
 
 > **Documento:** `FIRMWARE_EVOLUTION_IMPLEMENTATION_PLAN.md`  
-> **Estado:** Propuesto / Aprobado para Planificación  
+> **Estado:** Revisado v2 — pendiente de aprobación  
 > **Rama de Trabajo:** `firmware-evolution`  
-> **Plataforma Objetivo:** ESP32-S3 (Xtensa Dual-Core 240 MHz, ESP-IDF v5.5+) & Configurator (React 19 / Vite / TS)  
-> **Fecha:** Octubre 2026  
+> **Plataforma Objetivo:** ESP32-S3 (Xtensa dual-core, **ESP-IDF 6.0.2** — ver `sdkconfig` y `main/idf_component.yml` que exige `idf >= 6.0`) & Configurator (React 19 / Vite / TS)  
+> **Fecha:** Octubre 2026
 
 ---
 
-## 1. Visión y Objetivos del Proyecto
+## 0. Registro de Revisión (qué cambió respecto a v1 y por qué)
 
-El proyecto **Tecleados ESP Firmware (TEF)** ha consolidado las bases funcionales de un teclado mecánico ergonómico dividido (*split*) de alto nivel: transporte USB dual con NKRO nativo de 256 bits, Bluetooth LE con enrutamiento multi-perfil (NimBLE), enlace peer-to-peer cifrado sobre ESP-NOW (X25519 + AES-128-CCM), protocolo de configuración binario de alta velocidad (*Blast+Reconcile*) y un configurador web visual con soporte 3D y WebHID/WebBLE.
+Cada afirmación del plan original fue contrastada contra el código. Resumen de hallazgos que **cambian el diseño**:
 
-El objetivo de este **Plan de Implementación Integral** es transformar este prototipo avanzado en un producto de categoría industrial y competitiva (*gaming-grade* / *daily-driver wireless*), resolviendo las deudas técnicas latentes y expandiendo sus capacidades funcionales a lo largo de **5 Fases Secuenciales**:
+| # | Afirmación en v1 | Realidad verificada en el repo | Consecuencia en v2 |
+|---|---|---|---|
+| R1 | Toolchain ESP-IDF v5.5, CI con `espressif/idf:v5.5` | `sdkconfig` = **IDF 6.0.2**; `main/idf_component.yml` pide `idf >= 6.0` | CI y APIs (ADC, GPIO) se planifican para IDF 6.x |
+| R2 | Flashear app en `0x10000` | [`partitions.csv`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/partitions.csv): app `factory` en **`0x90000`**, NVS `0x9000` (512 KB), **sin particiones OTA** | Offsets se leen de `flasher_args.json`, nunca hardcodeados; se evalúa OTA (§5.1) |
+| R3 | "Liberar >9 KB de DRAM interna" al unificar tap-workers | Las 4 tareas `kb_tap_*` se crean con `MALLOC_CAP_SPIRAM` ([`kb_macro.c#L611-L613`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L611-L613)); solo `comm_timeout_task` (4 KB) está en DRAM interna | Ahorro real: ~4 KB DRAM + ~12 KB PSRAM. Prioridad baja |
+| R4 | Mailbox `xQueueOverwrite` de `kb_report_payload_t` | El reporte se arma **desde el estado compartido** `s_v_nkro` en `kb_macro_send_report()`; lo llaman `kb_manager`, `macro_task`, `tap_worker` y `kb_custom_key` | Mailbox de payload es innecesario y puede perder un *press* corto; se usa notificación + snapshot (§1.2) |
+| R5 | El split sync de custom keys solo requiere subir cota a 120 y agregar `vTaskDelay` cada 8 paquetes | El push ya es **stop-and-wait con ACK** (`on_ack`, sem de TX); la cota `64` es real (macros `64` y combos `32` también están hardcodeados) | Fix de 3 líneas + constantes; **no** agregar delays |
+| R6 | "Estado actual: 36 % de CPU" por settling | Cierto **solo mientras hay teclas activas**; en reposo se usa ISR + `ulTaskNotifyTake` | Objetivos de CPU recalculados (§2.1) |
+| R7 | Reducir settling a 5–8 µs "porque es seguro" | El propio comentario de [`kb_matrix.c#L77`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L77) calcula ~13 µs de constante RC | Se hace **parametrizable y medido con osciloscopio**, no fijado a ciegas |
+| R8 | `GPIO.in1.data` + dos máscaras (low/high) | Filas = GPIO1–6, todas en el banco bajo (<32) | Basta una lectura de `GPIO.in`/`GPIO_IN_REG`; no hace falta `in1` |
+| R9 | `esp_adc_cal_characterize` | API legacy eliminada; en S3 se usa `adc_cali_create_scheme_curve_fitting` | Corregido (§3.1) |
+| R10 | Pin ADC "ADC1" sin especificar | **GPIO1–10 (todo ADC1) están ocupados por la matriz**; ADC2 (GPIO11–20) también (11–18 matriz, 19/20 USB) | Bloqueante de hardware → decisión previa en Fase 0 |
+| R11 | Divisor 100 kΩ/100 kΩ | Drena 4.2 V/200 kΩ ≈ **21 µA** ≈ todo el presupuesto de Deep Sleep (<20 µA) | Divisor de alta impedancia o gateado (§3.1) |
+| R12 | "BAS y telemetría split por implementar" | BAS **ya existe** ([`ble_hid_service.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/ble_module/ble_hid_service.c) read + `ble_hid_notify_battery_level`), y `split_protocol.h` ya tiene `battery_pct` (heartbeat en `split_task.c#L249`) | El driver ADC reemplaza el símbolo `weak`; el resto es cableado |
+| R13 | Wake de light-sleep por GPIO "negedge", "<10 µs" | En light sleep el wake por GPIO es **por nivel** (`gpio_wakeup_enable(..., LOW_LEVEL)`); la latencia es ~cientos de µs–ms (hay `ESP_SLEEP_WAIT_FLASH_READY_EXTRA_DELAY=2000`) | Rediseño del wake y de las métricas (§3.2) |
+| R14 | ESP-NOW con "DTIM" en light sleep | ESP-NOW no tiene AP/DTIM; requiere `esp_now_set_wake_window` + intervalo de wake sincronizado. Además `CONFIG_BT_CTRL_MODEM_SLEEP` está **deshabilitado** hoy | Spike de viabilidad previo (§3.0) |
+| R15 | Dongle con "ESP32-C3 o S3 Mini" y endpoints USB HID | El **C3 no tiene USB OTG** (solo USB-Serial-JTAG): no puede ser dispositivo HID | Solo S3 (o S2). Además `splitmod` soporta **un único peer** |
+| R16 | Dongle = "sub-proyecto ligero" | Layers, macros, combos, custom keys y config viven en el *master* | El dongle es una **variante de build del master** (§4.1) |
+| R17 | Ejemplo de display Sharp LS027B7DH01 | Es un panel de 2.7" (400×240), no apto para un teclado; el de Nice!View es LS011B7DH03 (160×68) | Corregido (§4.4) |
+| R18 | "Home-row mods" desde cero con *Permissive Hold* **y** *Hold-on-other-key-press* | Ya existen engine tap/hold/double-tap ([`kb_system_action.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_system_action.c)) y `CKEY_MODE_MULTI_ACTION`; ambas reglas son **flavors excluyentes**, no complementarios | Se audita lo existente y se agrega un resolvedor *interrupt-aware* (§2.4) |
+| R19 | Tests y CI al final (Fases 5.2/5.3) | `test/run_tests.sh` falla hoy en el primer `#include` (`event_bus.h` no encontrado; faltan `-I../components/...`) | **Se adelantan a Fase 0**: sin red de seguridad no se debe tocar el núcleo |
+| R20 | Mouse HID ya disponible en el dongle ("Endpoint HID 2") | [`usb_descriptors.h`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/include/usb_descriptors.h) solo define teclado + consumer | Mouse HID (USB **y** BLE report map) es trabajo nuevo (§4.5) |
+| R21 | `atomic_uint_least16_t` | Xtensa solo tiene `S32C1I` nativo de 32 bits; atomics de 16 bits caen en emulación con spinlock; además `kb_macro_get_layer_mask()` **escribe** (limpia capas borradas) siendo un getter | `_Atomic uint32_t` + CAS (§1.3); tests host pasan a `-std=c11` |
+
+---
+
+## 1. Visión y Objetivos
+
+TEF ya cuenta con USB NKRO, BLE multi-perfil (NimBLE), enlace split cifrado sobre ESP-NOW (X25519 + AES-128-CCM), protocolo *Blast+Reconcile* y un configurador web. El objetivo es llevarlo a un producto *daily-driver wireless* / *gaming-grade* en **6 fases secuenciales, cada una entregable y reversible**:
 
 ```mermaid
 flowchart TD
-    Fase1["Fase 1: Core, Concurrencia y Estabilidad"] --> Fase2["Fase 2: Motor de Escaneo y Latencia (0 ms)"]
-    Fase2 --> Fase3["Fase 3: Autonomía y Ahorro de Energía Real"]
-    Fase3 --> Fase4["Fase 4: Periféricos y Hardware Extendido"]
-    Fase4 --> Fase5["Fase 5: Ecosistema Web y CI/CD Automatizado"]
+    F0["Fase 0: Fundaciones (tests, CI, métricas, pines, versión de protocolo)"] --> F1["Fase 1: Core y concurrencia"]
+    F1 --> F2["Fase 2: Latencia + Tap-Hold avanzado"]
+    F2 --> F3["Fase 3: Energía"]
+    F3 --> F4["Fase 4: Hardware extendido (Dongle, Encoders, Display, Trackball)"]
+    F3 --> F5["Fase 5: Ecosistema web (Flasher + Releases)"]
+    F4 -.-> F5
 ```
+
+### Principios rectores
+1. **Medir antes de optimizar**: cada optimización tiene una métrica base capturada en Fase 0.
+2. **Un cambio = un commit atómico = una métrica o test que lo justifica.**
+3. **Feature flags (Kconfig) para todo cambio de comportamiento observable** (`CONFIG_TEF_EAGER_DEBOUNCE`, `CONFIG_TEF_MATRIX_SETTLE_US`, `CONFIG_TEF_POWER_MGR`…), permitiendo rollback sin revertir.
+4. **Definition of Done por fase** (§6): tests host verdes, `idf.py build` sin warnings nuevos, documentación del módulo actualizada (`components/*/*_MODULE.md` y, si cambia la arquitectura, `universe/modules/`), medición adjunta.
 
 ---
 
 ## 2. Mapa de Fases y Módulos Afectados
 
-| Fase | Componentes Principales Afectados | Objetivo Clave | Impacto Técnico |
+| Fase | Componentes | Objetivo | Riesgo |
 |---|---|---|---|
-| **Fase 1** | `keyboard` (`kb_manager`, `kb_macro`), `split` (`split_config_sync`), `comm_module`, `button_module` | Eliminar bloqueos síncronos de 100 ms, subsanar fuga de sincronización split y consolidar tareas FreeRTOS. | Estabilidad crítica, determinismo a 1000 Hz, menor huella de memoria DRAM. |
-| **Fase 2** | `keyboard` (`kb_matrix`, `kb_manager`) | *Eager Debounce* asimétrico (latencia inicial de 0 ms) y lectura atómica de silicio (`GPIO.in`). | Respuesta competitiva gaming, reducción del uso de CPU del 36% a <8%. |
-| **Fase 3** | `battery_module`, `ble_module`, `split`, Power Management (`esp_pm`) | Driver ADC LiPo real con calibración eFuse y ciclo dinámico de reloj (DFS + Light-Sleep con wake por GPIO). | Autonomía de batería extendida de 8 horas a semanas de uso continuo. |
-| **Fase 4** | `dongle_module` (nuevo), `display_module` (nuevo), `encoder_module` (nuevo), `pointing_module` | Receptor USB Dongle 2.4 GHz a 1000 Hz, pantallas de estado (Sharp/Nice!View/OLED), Encoders y Home-Row Mods. | Ecosistema de hardware profesional, soporte para periféricos avanzados. |
-| **Fase 5** | `configurator/` (React/TS), `test/` (Host C Mocks), `.github/workflows/` | Flasheador WebSerial in-browser (`esptool-js`), saneamiento total de la suite de tests y CI/CD en PR. | Experiencia de usuario plug-and-play sin herramientas de consola; garantía anti-regresiones. |
+| **0** | `test/`, `.github/workflows/`, `split_protocol`, docs de hardware | Red de seguridad, línea base medida, presupuesto de pines, versión de protocolo split | Bajo |
+| **1** | `keyboard` (`kb_manager`, `kb_macro`, `kb_matrix`), `split_config_sync`, `comm_module` | Cero bloqueos en el scan loop; sync completo de custom keys; concurrencia correcta | Bajo-Medio |
+| **2** | `keyboard` (`kb_matrix`, `kb_manager`, `kb_system_action`, `kb_custom_key`), `config_module`, `configurator` | Latencia interna < 1.2 ms (p99); resolvedor Tap-Hold con flavors | Medio |
+| **3** | `battery_module`, `power_mgr` (nuevo), `split`, `ble_module` | Batería real y light/deep sleep | **Alto** (depende de spike) |
+| **4** | `dongle` (variante de build), `encoder`, `display`, `pointing` | Hardware extendido | Medio-Alto (pines) |
+| **5** | `configurator/`, CI release | Flasher in-browser y releases publicadas | Medio |
 
 ---
 
-## 3. Desglose Exhaustivo por Fases
+## 3. Desglose por Fases
+
+---
+
+### FASE 0: Fundaciones
+
+#### 0.1. Sanear la suite de tests host (antes: 5.2)
+* **Estado verificado:** `cd test && bash run_tests.sh` → `fatal error: event_bus.h: No such file or directory`. `run_tests.sh` solo pasa `-Iinclude`.
+* **Acciones:**
+  1. Agregar a `INCLUDES` todos los `-I../components/<mod>/include` (event_bus, keyboard, config_module, ble_module, usb_module, status_module, split, comm_module…). Idealmente generarlos con un `find ../components -maxdepth 3 -name include`.
+  2. Cambiar `-std=c99` → **`-std=gnu11`** (necesario para `<stdatomic.h>` en 1.3 y habitual en el código de IDF).
+  3. Corregir bitrot conocido: inclusiones de `usb_module` en [`test/main.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/main.c), `process_rx_request` → `comm_process_rx_request` en [`test_usb_rx.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/usb/test_usb_rx.c), constantes `KB_LAYER_FN1`/`SYS_ACTION_LAYER_FN1` en [`test_kb_layout.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/keyboard/test_kb_layout.c) (migrar a la API de máscara de capas).
+  4. Alinear mocks (`test/include/`) con **IDF 6.x**; no "5.5".
+  5. Agregar `-fsanitize=address,undefined` en un modo `run_tests.sh --asan`.
+* **Aceptación:** `bash run_tests.sh` = 0 fallos en Linux; el resultado JUnit (`test_results.xml`) se sube como artefacto de CI.
+
+#### 0.2. CI mínimo desde el día uno (antes: 5.3)
+* Crear `.github/workflows/ci.yml` (hoy **no existe** `.github/`), ejecutado en cada PR:
+  1. **host-tests** (`ubuntu-latest`, gcc).
+  2. **firmware-build**: contenedor `espressif/idf:v6.0` (o la versión exacta fijada en `dependencies.lock`), `idf.py build`, `-Werror` sobre warnings **nuevos** (baseline guardado), y reporte de `idf.py size-components` comparado contra el `main` (falla si DRAM interna libre cae > X KB; el firmware ya vive al límite de SRAM con NimBLE + Wi-Fi).
+  3. **configurator**: `npm ci && npm run lint && npm run build` (+ `tsc --noEmit`).
+* Cache de `managed_components/` y `~/.espressif`/ccache para tiempos razonables.
+
+#### 0.3. Línea base de métricas (instrumentación)
+* El scan loop ya contabiliza `min/max scan interval` y reportes/s; extender con:
+  - **Pin de depuración** (GPIO de test, `CONFIG_TEF_DEBUG_LATENCY_PIN`) que se alterna cuando una pulsación nueva entra al NKRO → medir con analizador lógico *interruptor ↔ pin* y *interruptor ↔ SOF USB*.
+  - Contador de **tiempo máximo bloqueado** en `kb_macro_send_report` (histograma).
+  - % de CPU del core del `kb_manager` mientras hay teclas activas (`uxTaskGetSystemState`/`vTaskGetRunTimeStats`).
+  - Inventario real de tareas (`vTaskList`): el "hasta 16 tareas" de v1 **no estaba verificado**; adjuntar la tabla con stack/high-water-mark y ubicación (DRAM/PSRAM).
+  - Consumo base con PPK2 en USB, BLE conectado idle y BLE + split.
+* Guardar resultados en `implementations/baseline/` (CSV + capturas) para la matriz de §7.
+
+#### 0.4. Presupuesto de pines y decisión de hardware (**bloqueante para Fases 3 y 4**)
+* **Mapa actual:** filas GPIO1–6; columnas GPIO7–18, 21, 38–42; RGB GPIO48; BOOT GPIO0; USB D±/GPIO19–20.
+* **Libres (a validar contra el modo de PSRAM Quad/Octal y strapping):** GPIO43/44 (UART0), 45/46 (strapping, usar con cuidado), 47, y 33–37 solo si la PSRAM es Quad.
+* **Entregable:** tabla de asignación para: ADC batería (1 pin, **debe ser ADC1/GPIO1–10 → hoy ocupados**), I²C/SPI de display (2–4 pines), encoders (2 pines c/u), trackball PMW3360 (SPI + MOT), wake de deep sleep. Opciones si no alcanzan: fuel-gauge I²C (MAX17048, comparte bus con OLED), expansor I/O (el encoder puede ir en la propia matriz), o revisión de PCB. **Sin esta tabla no se arranca 3.1 ni 4.x.**
+
+#### 0.5. Versionado del protocolo split
+* Antes de agregar paquetes (telemetría, encoders, mouse), añadir un campo `proto_version` al handshake/heartbeat de `split_protocol.h` y rechazar mitades incompatibles con un estado visible en el configurador. Evita que una mitad actualizada y otra no queden en silencio inconsistentes.
 
 ---
 
 ### FASE 1: Core del Firmware, Concurrencia y Sincronización
 
-#### 1.1. Despacho Asíncrono No-Bloqueante de Reportes HID/BLE
-* **Diagnóstico del Problema:**
-  En [`components/keyboard/kb_macro.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L78-L98), la función `kb_macro_send_report()` realiza un bucle de reintento síncrono:
-  ```c
-  for (int i = 0; i < 100; i++) {
-      err = kb_send_report(snapshot);
-      if (err == ESP_OK) break;
-      vTaskDelay(pdMS_TO_TICKS(1));
-  }
-  ```
-  Esta función es invocada de forma directa y bloqueante desde [`components/keyboard/kb_manager.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_manager.c#L447) dentro del ciclo de escaneo a 1000 Hz. Si la conexión BLE experimenta congestión en la cola de paquetes o si el enlace no está completamente establecido, el escaneo de teclas físico se congela durante hasta **100 milisegundos**.
-* **Diseño e Implementación:**
-  1. Crear una cola de tipo buzón sobreescribible (*mailbox queue*) de longitud 1 con tamaño `sizeof(kb_report_payload_t)` utilizando `xQueueCreate(1, sizeof(kb_report_payload_t))`.
-  2. Sustituir la llamada síncrona en `kb_manager` por un envío no bloqueante con `xQueueOverwrite()` (tiempo de ejecución sub-microsegundo).
-  3. Crear una tarea ligera de despacho de transporte `kb_transport_task` (prioridad media, stack 3 KB) que espere en la cola mediante `xQueueReceive(..., portMAX_DELAY)`.
-  4. Si el transporte falla o reporta `ESP_ERR_INVALID_STATE` (BLE desconectado o buffer lleno), la tarea de transporte gestiona el backoff de reintentos sin afectar en absoluto la velocidad de muestreo ni el registro de la matriz en `kb_manager`.
-
-```mermaid
-sequenceDiagram
-    participant Matrix as kb_manager (1000 Hz)
-    participant Queue as Report Queue (xQueueOverwrite)
-    participant Transport as kb_transport_task
-    participant Endpoint as USB / BLE Physical Driver
-
-    Matrix->>Queue: xQueueOverwrite(snapshot) [~50 ns]
-    Matrix-->>Matrix: Continúa escaneo sin demora
-    Queue->>Transport: xQueueReceive()
-    Transport->>Endpoint: kb_send_report()
-    alt Buffer Lleno / Desconectado
-        Transport-->>Transport: Reintento con backoff en hilo separado
-    else Éxito
-        Transport-->>Queue: Espera siguiente reporte
-    end
-```
-
-#### 1.2. Corrección del Límite de Sincronización Split (Custom Keys)
-* **Diagnóstico del Problema:**
-  En [`components/split/split_config_sync.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c#L264):
-  ```c
-  } else if (kind == CFGMOD_KIND_CKEY && strcmp(key, "ck_idx") == 0) {
-      cfg_ckey_index_t cidx = {0};
-      size_t cidx_len = sizeof(cidx);
-      if (cfgmod_read_storage(kind, key, &cidx, &cidx_len) == ESP_OK) {
-          for (uint16_t j = 0; j < 64; j++) {  // <-- BUG CRÍTICO: Hardcodeado a 64
-              if (cidx.mask[j / 8] & (1u << (j % 8))) {
-  ```
-  La capacidad real del sistema es de 120 claves ([`CFG_CKEYS_MAX_COUNT = 120`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/include/cfg_custom_keys.h#L10)). Las claves entre los índices 64 y 119 nunca son sincronizadas a la mitad esclava, provocando teclas mudas en la mitad remota al usar custom keys altas.
+#### 1.1. Bug de sincronización de Custom Keys (quick win, **primer commit de la fase**)
+* **Diagnóstico confirmado:** [`split_config_sync.c#L264`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c#L264) itera `j < 64` pero `CFG_CKEYS_MAX_COUNT = 120`. Las ckeys 64–119 nunca llegan al esclavo.
 * **Acciones:**
-  1. Reemplazar la cota por `for (uint16_t j = 0; j < CFG_CKEYS_MAX_COUNT; j++)`.
-  2. Verificar que la función `split_config_sync_push()` maneje adecuadamente la tasa de ráfaga para 120 llaves sin saturar el anillo de transmisión ESP-NOW, agregando un `vTaskDelay(pdMS_TO_TICKS(1))` cada 8 paquetes empujados.
+  1. Reemplazar los literales por constantes: ckeys → `CFG_CKEYS_MAX_COUNT`; macros (`64`) → `CFG_MACROS_MAX_COUNT`; combos (`32`) → `CFG_COMBOS_MAX_COUNT`. Hoy coinciden, pero son latentes.
+  2. **No** agregar `vTaskDelay` cada 8 paquetes: `split_config_sync_push` ya es stop-and-wait por ACK (con `tx_sem`). Lo que sí hay que **medir** es el tiempo total de `push_all` con 120 ckeys + 64 macros (con `esp_timer`), y fijar un presupuesto (p. ej. < 10 s) para no degradar el *pairing UX*.
+  3. Test host: poblar `ck_idx` con bits > 64 y verificar que se generan los `ck_N` correspondientes.
+* **Aceptación:** esclavo con las 120 ckeys idénticas al master (checksum de NVS).
 
-#### 1.3. Consolidación de Tareas FreeRTOS y Migración a Temporizadores
-* **Diagnóstico del Problema:**
-  El firmware instancia hasta 16 tareas concurrentes. Particularmente:
-  - `comm_timeouts_task` en [`components/comm_module/comm_dispatch.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_dispatch.c#L143-L160) duerme continuamente 5 ms en un bucle `while(1)` consumiendo 4 KB de stack únicamente para evaluar dos marcas de tiempo (`s_rx_last_packet_us`).
-  - El sistema de Tap-Hold en [`components/keyboard/kb_macro.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c) genera 4 tareas worker separadas `kb_tap_0..3` (3 KB de stack cada una = 12 KB).
-* **Acciones:**
-  1. **Eliminación de `comm_timeouts_task`**: Sustituir el bucle de sondeo por un temporizador de software de ESP-IDF (`esp_timer_create`). El timer de timeout de 100 ms se inicia (`esp_timer_start_once`) únicamente al recibir el primer fragmento de ráfaga en `comm_rx.c`, y se detiene automáticamente al completar la transacción o disparar el reset de protocolo.
-  2. **Unificación de Workers de Tap-Hold**: Reemplazar las 4 tareas independientes de tap-hold por una única tarea worker con una cola de eventos o por temporizadores de FreeRTOS (`TimerCallbackFunction_t`), liberando más de 9 KB de memoria DRAM interna.
+#### 1.2. Envío de reportes sin bloqueo (replanteado)
+* **Diagnóstico confirmado:** [`kb_macro_send_report()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L78-L98) reintenta 100×`vTaskDelay(1)`. `kb_send_report` retorna `ESP_ERR_INVALID_STATE` (BLE ruteado pero desconectado) o `ESP_FAIL` (USB no montado / no `ready`) → **cada reporte con cambio bloquea hasta 100 ms** el scan loop (llamado desde [`kb_manager.c#L447`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_manager.c#L447)).
+* **Bug latente adicional:** tras el envío, `kb_manager` hace `memcpy(s_last_matrix, s_matrix)` **aunque `result != ESP_OK`**. Si falla el reporte de *release* y no hay más cambios, el host queda con tecla pegada hasta el *keepalive* (`MIN_REPORT_RATE_HZ`).
+* **Por qué no el mailbox de v1:** el payload se reconstruye desde `s_v_nkro` (estado compartido protegido por mutex) y lo disparan 4 contextos distintos; una cola de longitud 1 con `xQueueOverwrite` puede **perder una pulsación breve** (press+release entre dos despachos) y duplica el estado.
+* **Diseño (en dos pasos, el 2º condicionado a medición):**
+  1. **Paso A (≈20 líneas):** `kb_macro_send_report_nowait()` = un único intento, sin reintentos. En `kb_manager`: si falla, **no** actualizar `s_last_matrix` y marcar `s_report_pending`; reintentar en el siguiente scan con backoff acotado (1→2→4→…→16 ms). Los contextos `macro_task`/`tap_worker`/`kb_custom_key` (que ya corren en tareas propias) mantienen una variante con reintento acotado `kb_macro_send_report_blocking(timeout_ms)` porque ahí **no se puede descartar** un press/release de macro.
+  2. **Paso B (solo si la medición 0.3 muestra bloqueo residual en `ble_hid_send_*`/TinyUSB):** `kb_transport_task` despertada por **`xTaskNotify` con *dirty flag*** (no con cola de payload); al despertar toma un snapshot del `s_v_nkro` y envía. Efecto colateral deseado: **serializa el acceso a TinyUSB**, que hoy se invoca desde varias tareas (TinyUSB no es thread-safe para `tud_hid_*`). Para no perder un *press* breve, el transporte nunca coalesce si el snapshot pendiente contiene una tecla que el nuevo no tiene: en ese caso envía ambos en orden.
+* **Aceptación:** con USB desconectado y BLE routing activo, `kb_manager` mantiene el período de scan (p99 < 2×) mientras se teclea; sin teclas pegadas tras reconectar.
 
-#### 1.4. Protección de Concurrencia en Capas Dinámicas
-* **Diagnóstico del Problema:**
-  En [`components/keyboard/kb_macro.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L427-L435), las variables de estado de capa `s_momentary_layers` y `s_toggled_layers` son accedidas y modificadas concurrentemente desde múltiples contextos de ejecución (escaneo de matriz, tareas de macros y tareas de tap) mediante operaciones de asignación bitwise no atómicas.
+#### 1.3. Estado de capas dinámicas thread-safe
+* **Diagnóstico confirmado:** [`s_momentary_layers`/`s_toggled_layers`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L28-L29) se modifican con `|=`, `&=`, `^=` desde varios contextos/núcleos. Además **`kb_macro_get_layer_mask()` escribe** (líneas ~111-116: limpia capas borradas), es decir, un *getter* con efectos secundarios invocado desde cualquier tarea.
 * **Acciones:**
-  1. Convertir `s_momentary_layers` y `s_toggled_layers` a tipos atómicos estándar C11 (`atomic_uint_least16_t` de `<stdatomic.h>`), utilizando `atomic_fetch_or_explicit()`, `atomic_fetch_and_explicit()` y `atomic_fetch_xor_explicit()` con orden de memoria `memory_order_relaxed`.
-  2. Esto garantiza operaciones libres de contención de cerrojos (*lock-free*) y libres de condiciones de carrera a nivel de instrucción de CPU.
+  1. Usar `_Atomic uint32_t` (acceso nativo `S32C1I` en Xtensa; los de 16 bits caen en `libatomic` con spinlock) con `atomic_fetch_or/and/xor_explicit`.
+  2. El "toggle" es read-modify-write → `atomic_fetch_xor`. La purga de capas borradas se mueve fuera del getter (se ejecuta una sola vez en el handler del evento de actualización de layouts, único escritor).
+  3. `memory_order_relaxed` es correcto para la máscara aislada; si se agrega correlación con otros datos (p. ej. índice de keymap cacheado), usar `acquire/release`.
+  4. Test host con dos hilos pthread hammereando set/clear (`-fsanitize=thread`).
 
-#### 1.5. Desacoplamiento Seguro de la Instalación de ISRs
-* **Diagnóstico del Problema:**
-  [`components/keyboard/kb_matrix.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L166) asume que [`components/button_module/button.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/button_module/button.c#L128) ya llamó a `gpio_install_isr_service(0)`.
-* **Acciones:**
-  1. En `kb_matrix_init_isr()`, invocar preventivamente `gpio_install_isr_service(0)` e ignorar el código de retorno `ESP_ERR_INVALID_STATE` (el cual indica que el servicio ya estaba previamente instalado). Esto permite que el módulo `keyboard` sea autosuficiente en compilaciones modulares o suites de test.
+#### 1.4. Tareas FreeRTOS: reemplazar polling por plazos (prioridad media-baja)
+* **`comm_timeout_task`** ([`comm_dispatch.c#L143-L160`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_dispatch.c#L143-L160)): chequea **RX y TX** cada 5 ms, 4 KB de DRAM interna. Sustituir por **un `esp_timer` one-shot** re-armado al *próximo plazo* (min(rx_deadline, tx_deadline)), iniciado en el primer fragmento de cada ráfaga y cancelado al completar.
+  - ⚠️ El callback corre en la tarea de `esp_timer`; hoy `comm_erase_rx_buffer()`/`comm_session_unlock()` se ejecutan desde otro contexto que `comm_proc_task`. Para mantener un **único consumidor**, el callback solo debe **encolar un mensaje de timeout** al `s_comm_message_buffer` y que `comm_proc_task` ejecute el reset.
+* **`kb_tap_0..3`:** no es un *pool* ocioso: 4 workers permiten taps concurrentes con `vTaskDelay(dur)` dentro. **Un solo worker serializaría los taps** (regresión de latencia con taps simultáneos). La alternativa correcta es **eliminar el delay bloqueante**: press inmediato + liberación programada con una **lista de plazos** (heap mínimo) atendida por una única tarea o `esp_timer`. Ahorro real: ~12 KB de **PSRAM** (no DRAM). Hacerlo solo si la medición 0.3 justifica el esfuerzo.
+
+#### 1.5. Instalación autónoma del servicio de ISR
+* [`kb_matrix_init_isr()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L166) asume que `button.c` ya llamó `gpio_install_isr_service(0)`. Invocarlo en `kb_matrix_init_isr()` ignorando `ESP_ERR_INVALID_STATE`. Verificar el flag IRAM de la ISR (`IRAM_ATTR` ya presente) con `CONFIG_GPIO_CTRL_FUNC_IN_IRAM` si se activa light sleep (§3.2).
 
 ---
 
-### FASE 2: Motor de Escaneo y Reducción de Latencia a Nivel Competitivo
+### FASE 2: Latencia Competitiva + Tap-Hold Avanzado
 
-#### 2.1. Algoritmo de Eager Debouncing (0 ms de Latencia Inicial)
-* **Diagnóstico del Problema:**
-  En [`components/keyboard/kb_manager.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_manager.c#L38-L41), el debouncer integrativo exige `KB_DEBOUNCE_SCANS = 5` consecutivas tanto para registrar la pulsación como para la liberación:
-  $$\text{Latencia de Entrada} = 5 \text{ escaneos} \times 1\text{ ms} = 5\text{ ms}$$
-* **Diseño e Implementación de Eager Debounce:**
-  1. **Disparo Inmediato (0 ms Lag):** En cuanto una tecla pasa de inactiva a activa en el primer escaneo, el evento de pulsación se emite de inmediato al mapa de NKRO sin esperar ciclos de confirmación.
-  2. **Ventana de Supresión Reactiva (*Eager Lockout*):** Tras emitir el evento, se congela el estado de esa tecla durante una ventana fija configurable de 5 ms (5 ciclos). Cualquier fluctuación o rebote electromecánico posterior durante esa ventana es ignorado.
-  3. **Liberación con Filtrado:** La liberación de la tecla requiere que se detecte liberada durante 3 a 5 ciclos consecutivos antes de enviar el evento de *release*, evitando liberaciones prematuras accidentales.
+> **Ojo con la expectativa:** el objetivo realista es la **latencia interna** (matriz → bytes de reporte entregados al stack USB/BLE). La latencia extremo a extremo la domina el transporte (USB: ≤1 ms de polling; BLE: intervalo de conexión 7.5–15 ms).
 
-```
-Pulsación Física:   ---\_/\_/\------------------------------------/\_/\_----/---
-Estado Tradicional: ----------[5ms Delay]=========================[5ms]--------
-Eager Debounce:     ---[0ms DISPARO!]=============================[Filtro]-----
-```
-
-#### 2.2. Lectura Directa de Registros de Silicio (`GPIO.in`)
-* **Diagnóstico del Problema:**
-  En [`components/keyboard/kb_matrix.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L78-L84), por cada una de las 18 columnas se leen las filas una a una llamando a `gpio_get_level()`:
-  $$18 \text{ columnas} \times 6 \text{ filas} = 108 \text{ llamadas a función por ciclo de 1 ms}$$
+#### 2.1. Tiempo de asentamiento parametrizable y medido (**mayor ganancia, va primero**)
+* **Diagnóstico:** [`esp_rom_delay_us(20)`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L77) × 18 columnas = **360 µs por scan activo** (36 % del core) como *busy-wait*.
 * **Acciones:**
-  1. En lugar de iterar llamando a wrappers de la ROM de Espressif, realizar una lectura directa del registro de entrada de 32 bits del ESP32-S3:
-     ```c
-     uint32_t gpio_in_low  = GPIO.in;
-     uint32_t gpio_in_high = GPIO.in1.data;
-     ```
-  2. Extraer los estados de las filas aplicando máscaras de bits precomputadas (`s_row_mask_low` y `s_row_mask_high`) en una única operación de ensamblador Xtensa.
+  1. Kconfig `CONFIG_TEF_MATRIX_SETTLE_US` (default 20 = comportamiento actual).
+  2. Con osciloscopio, medir el flanco de fila (pull-up interno ≈45 kΩ + capacidad parásita) en el peor caso (fila más larga, tecla con diodo) y elegir `settle = 1.5 × t_medido`. **No** fijar 5–8 µs sin medición: la nota actual del código estima ~13 µs.
+  3. Prueba de estrés: barrer 10 000 pulsaciones de cada tecla con el generador de inyección (`SYS_CMD_INJECT_KEY` no sirve para el nivel físico; usar un banco con solenoides o un *matrix-shorting* con GPIOs de test) y exigir 0 *misses*/*ghosts*.
+  4. Opcional: *scan pipelining* (leer filas de la columna *n* mientras ya se activa la *n+1* solo si el hardware lo permite con diodos).
+* **Expectativa recalculada (R6):** con 8 µs ≈ 18×8 = 144 µs ≈ **14 % del core mientras hay teclas activas**; en reposo ya es ~0 % (ISR + notify). Objetivo: **< 15 %**, no "<8 %".
 
-#### 2.3. Sintonización del Tiempo de Asentamiento (*Settling Time*)
-* **Diagnóstico del Problema:**
-  [`components/keyboard/kb_matrix.c#L76`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L76) espera 20 µs tras seleccionar cada columna (`esp_rom_delay_us(20)`), lo que consume $18 \times 20\,\mu\text{s} = 360\,\mu\text{s}$ por milisegundo en tiempo de CPU inútil (36% del núcleo).
-* **Acciones:**
-  1. Reducir el retardo a un valor seguro de 5 a 8 µs (suficiente para que la capacitancia parásita de trazas de PCB estándar de teclados se estabilice con resistencias de pull-up internas de 45 kΩ).
-  2. Recuperar más del 25% de tiempo de CPU para tareas de criptografía y comunicación.
+#### 2.2. Eager Debounce (simplificado)
+* **Diagnóstico:** el integrador de [`debounce_update`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_manager.c#L143-L160) requiere `KB_DEBOUNCE_SCANS = 5` incrementos para marcar *press*: latencia de entrada ≈ 4–5 ms.
+* **Diseño — cambia una línea, no hace falta una ventana de lockout aparte:** al pasar de 0 → activo, saltar el contador **directamente a `KB_DEBOUNCE_SCANS`** (la tecla queda estable en el primer scan). Como el *release* solo ocurre cuando el contador llega a 0, los rebotes posteriores **ya quedan filtrados** por el propio integrador (el contador solo baja 1 por scan en bajo y se recupera en alto). Una ventana fija de 5 ms como en v1 solo retrasaría *releases* legítimos rápidos.
+* **Riesgo y mitigación:** un solo glitch de EMI ahora registra una tecla. Parámetro `CONFIG_TEF_PRESS_CONFIRM_SCANS` (default 1; subir a 2 si el banco de EMI lo exige) y `release_scans` independiente (default 5).
+* **Interacciones a revisar:** `kb_combo` (ventana de combos) y los timers de `kb_system_action` pueden depender implícitamente del retardo de 5 ms; correr sus tests antes/después.
+* **Objetivo medido (0.3):** matriz → pin de depuración **p99 < 1.2 ms** (≤ 1 período de scan + 1 scan activo), no "< 0.5 ms".
 
----
+#### 2.3. Lectura directa del banco de GPIO
+* Filas = GPIO1–6, todas < 32: **una** lectura de `GPIO_IN_REG` (o `GPIO.in`) por columna y `rows = (~in >> 1) & 0x3F`. **No usar `in1`** (R8; además el campo no se llama `data` en los headers S3 — verificar en `soc/gpio_struct.h` de IDF 6).
+* Reducir también las escrituras de columnas: GPIO7–18/21 están en el banco bajo (`out_w1tc/w1ts`) y GPIO38–42 en el alto (`out1_w1tc/w1ts`).
+* **Ganancia esperada ~10–15 µs por scan** (≪ 2.1). Se hace **después** de 2.1/2.2 y solo si el perfil lo justifica; encapsular en `kb_matrix_hal` para poder testear con mock.
 
-### FASE 3: Autonomía de Batería y Eficiencia Energética Real
-
-#### 3.1. Driver Real de Batería con Calibración ADC por eFuse
-* **Diagnóstico del Problema:**
-  En [`components/battery_module/battery.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/battery_module/battery.c#L10), la función devuelve el valor fijo `0xFF`.
-* **Diseño e Implementación:**
-  1. **Configuración de Periférico:** Configurar la unidad ADC1 del ESP32-S3 usando la API moderna de ESP-IDF `esp_adc/adc_oneshot.h`.
-  2. **Atenuación y Calibración:** Configurar atenuación de 12 dB (`ADC_ATTEN_DB_12`) para permitir lecturas hasta ~3100 mV, utilizando los coeficientes de calibración de fábrica grabados en eFuse (`esp_adc_cal_characterize`).
-  3. **Divisor Resistivo de Hardware:** Modelar la lectura en base a un divisor resistivo estándar (ej. 2x resistencias de 100 kΩ con condensador de 100 nF a tierra, factor divisor 2.0).
-  4. **Curva de Descarga LiPo (Lookup Table):** Mapear el voltaje leído contra una curva no lineal de LiPo (4.20 V = 100%, 3.85 V = 50%, 3.60 V = 10%, 3.30 V = 0% de corte) con filtro paso-bajo IIR de 16 muestras para eliminar ruido electromagnético.
-  5. **Integración con BLE BAS:** Publicar periódicamente (cada 60 segundos o ante cambios $\ge 2\%$) la notificación GATT al host Bluetooth mediante el servicio estándar BAS (UUID `0x180F`).
-  6. **Sincronización Split:** Enviar el porcentaje de batería de la mitad esclava a la mitad maestra mediante un nuevo paquete de telemetría ESP-NOW periódico.
-
-```mermaid
-graph LR
-    PinBatt[Batería LiPo 3.7V] --> DivRes[Divisor Resistivo 100k/100k]
-    DivRes --> ADC1[ESP32-S3 ADC1 Channel]
-    ADC1 --> Calib[Calibración eFuse ESP-IDF]
-    Calib --> IIR[Filtro Digital IIR 16-muestras]
-    IIR --> LUT[Curva Polinomial LiPo %]
-    LUT --> BAS[GATT BLE Battery Service 0x180F]
-    LUT --> SplitTel[ESP-NOW Telemetría a Maestro]
-```
-
-#### 3.2. Dynamic Frequency Scaling (DFS) y Modo Light-Sleep con Despertar GPIO
-* **Diagnóstico del Problema:**
-  [`components/split/split_task.c#L86`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_task.c#L86) fuerza el microcontrolador a correr permanentemente a 240 MHz con `light_sleep_enable = false`.
-* **Diseño del Gestor de Energía (`power_mgr`):**
-  Implementar una máquina de estados de energía con 4 niveles:
-
-| Estado de Energía | Frecuencia CPU | Radio BLE / ESP-NOW | Modo de Reposo | Consumo Estimado | Condición de Entrada / Salida |
-|---|---|---|---|---|---|
-| **ACTIVE** | 240 MHz / 160 MHz | Activos (Conexión continua) | Ninguno | ~65 - 80 mA | Teclas activas o tráfico USB/BLE en curso. |
-| **IDLE** | 80 MHz | BLE en ventana de conexión; ESP-NOW activo | Tickless Idle | ~15 - 20 mA | Sin pulsaciones durante 5 segundos. Despierta en <10 µs ante tecla. |
-| **LIGHT SLEEP** | Reloj APB suspendido | Radio periódica (DTIM / Intervalo BLE 30-50 ms) | `light_sleep_enable = true` | **~1.5 - 2.5 mA** | Sin pulsaciones durante 30 segundos. Despierta por interrupción GPIO negedge en filas. |
-| **DEEP SLEEP** | Silicio apagado (solo RTC) | Radios apagadas | Deep Sleep | **< 20 µA** | Inactividad prolongada (> 15 minutos). Despierta por cualquier tecla (RTC GPIO Wakeup) reiniciando por boot vector. |
+#### 2.4. Resolvedor Tap-Hold con *flavors* (antes: 4.4)
+* **Estado actual (auditado):** existe el engine tap/double-tap/hold por timeout ([`kb_system_action.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_system_action.c), defaults 300/500 ms) y `CKEY_MODE_MULTI_ACTION` con `hold_sustain`. **Lo que falta** es decidir el hold según **otras teclas** (interrupt-aware), imprescindible para home-row mods.
+* **Diseño:**
+  1. Un **buffer de resolución de eventos** en `kb_manager` *antes* de `kb_macro_process_action`: mientras una tecla tap-hold esté "indecisa", los eventos siguientes se encolan y se liberan en orden al decidirse.
+  2. **Flavor por tecla** (campo nuevo en el esquema, enum excluyente — no reglas acumulables):
+     - `TIMER` (hold solo por `tapping_term`, comportamiento actual),
+     - `HOLD_ON_OTHER_KEY_PRESS` (hold apenas se presiona otra tecla),
+     - `PERMISSIVE_HOLD` (hold si otra tecla se presiona **y suelta** dentro del *tapping term*),
+     - `TAP_PREFERRED/BALANCED` (opcional).
+  3. Parámetros por tecla: `tapping_term` (default 200 ms), `quick_tap_ms` (evita hold al repetir/arrastrar), `require_prior_idle_ms` (**clave anti-misfire en tipeo rápido**).
+  4. Cambios cross-stack: esquema de `cfg_custom_keys` (**bump de versión de protocolo**), UI del configurador (flavor, términos), tests host con secuencias deterministas (roll A+S, tap solo, hold, solapamientos).
+* **Nota:** el resolvedor añade latencia **por diseño** a esas teclas (se emite al soltar o al decidir); por eso depende de 2.2 y se mide aparte.
 
 ---
 
-### FASE 4: Nuevas Prestaciones de Hardware y Periféricos
+### FASE 3: Autonomía y Eficiencia Energética
 
-#### 4.1. Receptor Dongle USB Dedicado a 2.4 GHz (ESP-NOW Host)
-* **Objetivo:**
-  Proporcionar una conexión inalámbrica *gaming-grade* de 1000 Hz reales y latencia <1.5 ms a la PC, eludiendo las limitaciones de sondeo de Bluetooth LE (que típicamente impone intervalos de conexión de 8 a 15 ms con jitter).
-* **Arquitectura:**
-  1. **Hardware:** Sub-proyecto de firmware ligero para un ESP32-C3 o ESP32-S3 Mini montado en conector USB-A macho.
-  2. **Rol en la Red:** El Dongle se registra como receptor maestro ESP-NOW. Ambas mitades (izquierda y derecha) operan como nodos emisores sincronizados con la clave TSK del dongle.
-  3. **Dispositivo Compuesto USB:** El dongle expone endpoints USB nativos idénticos al firmware principal:
-     - Endpoint HID 1: Teclado NKRO 1000 Hz.
-     - Endpoint HID 2: Ratón / Consumo (Consumer Keys).
-     - Endpoint HID 3: Canal WebHID para el configurador.
+#### 3.0. Spike de viabilidad (2–3 días, **gate de la fase**)
+Los consumos de v1 eran hipótesis. Antes de diseñar, medir con PPK2 y validar:
+1. **BLE + light sleep:** hoy `CONFIG_BT_CTRL_MODEM_SLEEP` está **sin definir** y el reloj de sleep BLE es el efectivo `0`; confirmar qué fuente de 32 kHz (XTAL externo vs. RC interno) tiene el hardware, porque determina si el chip *puede* dormir con BLE conectado y con qué precisión de conexión.
+2. **ESP-NOW + light sleep:** viabilidad real de `esp_now_set_wake_window()` + `esp_wifi_connectionless_module_set_wake_interval()` y su efecto en la **latencia de la primera pulsación del esclavo** (si el master duerme su radio Wi-Fi, el evento espera al siguiente wake).
+3. **USB conectado:** con USB (TinyUSB) activo no hay light sleep → la política aplica solo al modo inalámbrico.
+4. Latencia de wake real desde light sleep (`ESP_SLEEP_WAIT_FLASH_READY_EXTRA_DELAY=2000` sugiere ms, no µs).
+* **Salida:** tabla *medida* de consumo y latencia de wake por estado; si no alcanza, el diseño de 3.2 se reduce a DFS + tickless (sin light sleep).
 
-```mermaid
-flowchart LR
-    subgraph Teclado Dividido
-        HalfL["Mitad Izquierda (ESP32-S3)"]
-        HalfR["Mitad Derecha (ESP32-S3)"]
-    end
-    
-    subgraph Receptor
-        Dongle["Dongle USB 2.4 GHz (ESP32-C3/S3)"]
-    end
-    
-    HalfL -- "ESP-NOW 1000 Hz Encrypted" --> Dongle
-    HalfR -- "ESP-NOW 1000 Hz Encrypted" --> Dongle
-    Dongle -- "USB HID 1000 Hz (Polling 1ms)" --> PC["Computadora Host"]
-```
+#### 3.1. Driver real de batería
+* **Hoy:** [`battery_get_level_pct()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/battery_module/battery.c) es un símbolo `weak` que devuelve `0xFF`. **BAS ya existe** (read + `ble_hid_notify_battery_level` al suscribirse) y el *heartbeat* split ya transporta `battery_pct` — solo falta el driver y la publicación periódica (R12).
+* **Diseño:**
+  1. **Pin (bloqueante, 0.4):** ADC1 = GPIO1–10 está 100 % ocupado por la matriz. Opciones: sacrificar un pin de columna, mover a fuel-gauge I²C, o revisión de PCB. ADC2 no es opción (conflicto con Wi-Fi/ESP-NOW).
+  2. **API IDF 6:** `adc_oneshot` + calibración `adc_cali_create_scheme_curve_fitting` (S3). Eliminar toda referencia a `esp_adc_cal_*`.
+  3. **Divisor de alta impedancia:** 100 k/100 k drena ≈21 µA (≈ el presupuesto completo de Deep Sleep). Usar ≥ 1 MΩ/1 MΩ **con capacitor ≥100 nF** como reservorio de carga del S/H, o un **MOSFET de gateo** habilitado solo al muestrear.
+  4. **Estimación de %:** LUT con interpolación lineal (4.20→100, 3.85→50, 3.60→10, 3.30→0 como punto de partida, **a calibrar con una descarga real**); mediana de N muestras (no solo IIR, por los picos de TX de radio); muestrear en un instante de baja carga (tras TX); **histéresis y monotonía** (el % no sube mientras descarga); considerar detección de carga (VBUS) para no mostrar valores falsos enchufado.
+  5. **Publicación:** timer de 60 s o Δ ≥ 2 % → `ble_hid_notify_battery_level`; el esclavo ya reporta `battery_pct` en el heartbeat (reemplazar el `0xFF` hardcodeado en `split_dispatch.c#L260`).
+  6. Reemplazar `weak` por una implementación con **Kconfig de pin/divisor** (`CONFIG_TEF_BATTERY_ADC_GPIO`, `…_DIVIDER_RATIO`); si no hay pin configurado, mantiene `0xFF`.
 
-#### 4.2. Módulo de Pantalla de Estado Ultra-Bajo Consumo (`display_module`)
-* **Hardware Soportado:**
-  - Pantallas de memoria ultra-eficientes tipo **Sharp Memory LCD** (ej. LS027B7DH01) o **Nice!View** (consumo < 10 µA en imagen estática).
-  - Pantallas OLED estándar **SSD1306** (128x32 o 128x64) por I2C.
-* **Información Visual a Renderizar:**
-  - Capa activa actual (Base, Nav, Num, Sym, Gaming).
-  - Nivel de batería porcentual de la mitad local y de la mitad remota.
-  - Perfil de conexión BLE activo (1 a 9) o indicador de modo USB / Dongle.
-  - Indicador de bloqueo de mayúsculas (Caps Lock).
-  - Métrica de velocidad de escritura en tiempo real (**WPM** - palabras por minuto).
-  - Latencia de ping RTT entre mitades en milisegundos (provista por `split_bench`).
+#### 3.2. Gestor de energía unificado (`power_mgr`)
+* **Hoy:** `pm_apply_active()` está **duplicada** en [`split_task.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_task.c#L84) y [`split_bridge.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_bridge.c#L37) (`light_sleep_enable = false`, 240 MHz fijo), y `CONFIG_PM_DFS_INIT_AUTO` está desactivado.
+* **Diseño idiomático:** un único dueño de `esp_pm_configure()` (configurado **una vez** con `light_sleep_enable = true` si 3.0 lo valida) y control de estados con **`esp_pm_lock`**: `ESP_PM_CPU_FREQ_MAX` adquirido mientras haya actividad (tecla, tráfico USB/BLE) y liberado tras un *grace period*. Evita reconfigurar PM repetidamente y es la forma soportada de forzar frecuencia.
+* **Máquina de estados (valores marcados *hipótesis* hasta 3.0):**
 
-#### 4.3. Soporte para Encoders Rotatorios y Sensores Señaladores
-* **Encoders Rotatorios (Volumen, Scroll, Zoom):**
-  - Implementación sobre el periférico de hardware **PCNT (Pulse Counter)** del ESP32-S3. La decodificación en cuadratura se ejecuta en hardware puro sin consumir interrupciones ni tiempo de CPU.
-  - Mapeo configurable en el layout para emitir teclas multimedia estándar (`CONSUMER_VOLUME_UP`, `CONSUMER_VOLUME_DOWN`) o pulsaciones de macros.
-* **Sensores de Ratón / Trackball:**
-  - Driver SPI para sensores ópticos de alta precisión tipo **PMW3360** / **PMW3389**.
-  - Tarea dedicada que sondea el registro de movimiento a 500 Hz y emite reportes estándar HID Mouse (deltas X, Y, botones).
+| Estado | CPU | Radios | Entrada | Consumo (hipótesis) |
+|---|---|---|---|---|
+| **ACTIVE** | 240/160 MHz | BLE + ESP-NOW | Tecla o tráfico | 65–80 mA |
+| **IDLE** | 80 MHz + tickless | BLE en intervalo, ESP-NOW activo | 5 s sin teclas | 15–20 mA |
+| **LIGHT SLEEP** | WFI/PM | Wake-interval acordado (§3.0) | 30 s sin teclas, **solo modo inalámbrico** | 1.5–2.5 mA |
+| **DEEP SLEEP** | RTC | Apagadas | > 15 min | < 20 µA (con divisor de 3.1) |
 
-#### 4.4. Motor de "Home-Row Mods" y Mod-Tap Nativo en Matriz
-* **Objetivo:**
-  Permitir que las teclas principales del área de descanso dactilar (*home row*, ej. `A`, `S`, `D`, `F`) emitan la letra al pulsarse brevemente, pero actúen como modificadores (`GUI`, `ALT`, `CTRL`, `SHIFT`) al mantenerse presionadas.
-* **Reglas Lógicas a Implementar en `kb_macro`:**
-  - **Tapping Term:** Umbral de tiempo configurable (default: 200 ms).
-  - **Permissive Hold:** Si se presiona otra tecla mientras la tecla tap-hold está retenida y se libera esa otra tecla dentro del tapping term, se decide inmediatamente por la función de modificador.
-  - **Hold On Other Key Press:** Disparo determinista de modificador al interactuar con teclas adyacentes.
+* **Detalles de implementación corregidos (R13):**
+  - **Light sleep:** `gpio_wakeup_enable(row_gpio, GPIO_INTR_LOW_LEVEL)` + `esp_sleep_enable_gpio_wakeup()`; columnas mantenidas en bajo (el modo ISR actual de `kb_matrix_set_interrupts_enabled(true)` ya lo hace). Tras el wake, **deshabilitar el wake por nivel** hasta soltar la tecla para no re-despertar en bucle.
+  - **Deep sleep:** filas GPIO1–6 son pines RTC → `esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW)`; mantener columnas en bajo con `gpio_hold_en()` + `gpio_deep_sleep_hold_en()`; pull-ups de filas vía `rtc_gpio_pullup_en`.
+  - **UX:** la primera tecla tras Deep Sleep se pierde (boot + reconexión BLE ≈ 1–2 s). Debe documentarse y reservarse al umbral largo.
+  - **Latencia de primera pulsación desde Light Sleep:** métrica explícita (§7), no "<10 µs".
+  - ISR y rutas de wake en IRAM (`CONFIG_PM_SLP_IRAM_OPT`, `PM_SLEEP_FUNC_IN_IRAM` ya activos).
+* **Rollback:** `CONFIG_TEF_POWER_MGR=n` mantiene el comportamiento actual (240 MHz fijo).
 
 ---
 
-### FASE 5: Ecosistema Web y Automatización CI/CD
+### FASE 4: Hardware Extendido y Periféricos
 
-#### 5.1. Actualizador de Firmware WebSerial In-Browser (`esptool-js`)
-* **Objetivo:**
-  Permitir al usuario final actualizar el firmware del teclado o borrar las particiones NVS directamente desde el navegador (Google Chrome / Edge) sin instalar Python, Git ni la toolchain de ESP-IDF.
-* **Implementación en el Configurador Web:**
-  1. Instalar la librería oficial `@espressif/esptool-js` en el proyecto Vite.
-  2. Agregar un modal interactivo en el configurador "Actualizar Firmware":
-     - Detección de puerto serie USB CDC mediante la API Web Serial (`navigator.serial`).
-     - Selección de versión de firmware desde GitHub Releases o carga manual de archivo `.bin`.
-     - Flasheo de particiones `bootloader.bin` (0x0000), `partition-table.bin` (0x8000) y `tecleados_firmware.bin` (0x10000) con barra de progreso interactiva en tiempo real.
+> Todo lo de esta fase depende del **presupuesto de pines (0.4)** y de `proto_version` (0.5). Orden por riesgo/valor: **4.1 Encoders → 4.2 Dongle → 4.3 Display → 4.4 Trackball.**
 
-```mermaid
-sequenceDiagram
-    participant User as Usuario en Navegador
-    participant WebApp as Configurador Web (React 19)
-    participant WebSerial as Web Serial API (Chrome)
-    participant MCU as ESP32-S3 ROM Bootloader
+#### 4.1. Encoders rotatorios
+* Modelar cada encoder como **dos teclas virtuales** (CW/CCW) integradas al *keymap/capas* existentes → el editor de layouts del configurador funciona sin esquema nuevo, y los eventos del esclavo viajan por el mismo canal de matriz.
+* Decodificación con **PCNT** (glitch filter por hardware) + una tarea/ISR que emite *press+release* virtual por *detent*. Parámetro de pasos por detent y debounce de *detent*.
 
-    User->>WebApp: Clic en "Flashear Firmware"
-    WebApp->>WebSerial: navigator.serial.requestPort()
-    WebSerial->>MCU: Abre conexión a 115200 baud
-    WebApp->>MCU: Secuencia de reinicio DTR/RTS a modo bootloader
-    MCU-->>WebApp: Sincronización SLIP OK
-    WebApp->>MCU: Envío de bloques binarios (921600 baud)
-    WebApp-->>User: Progreso visual (0% a 100%)
-    MCU->>MCU: Reinicio en nuevo firmware
-```
+#### 4.2. Dongle USB 2.4 GHz (variante de build del master)
+* **Hardware:** **ESP32-S3** (o S2) únicamente: el C3 no tiene USB OTG (R15).
+* **Arquitectura:** layers, macros, combos, ckeys y NVS ya viven en el *master* → el dongle es **el mismo firmware con `CONFIG_TEF_ROLE_DONGLE`**: sin matriz, sin BLE (ahorra RAM/flash), `kb_manager` consume `s_remote_matrix` de **dos** peers (hoy el flujo ya existe para uno). Las mitades pasan a ser *slaves* puros.
+* **Trabajo no trivial que v1 omitía:** `splitmod` maneja **un único** `peer_mac` → multi-peer (tabla de 2 peers, pairing con 2 mitades, TSK por par, ranuras ESP-NOW cifradas), `split_config_sync` a ambos, fijación de canal Wi-Fi, y reconexión.
+* **Métricas realistas:** ESP-NOW emite **solo ante cambios**, "1000 Hz" es el polling USB. Objetivo: matriz→host p50 ≤ 2 ms, p99 ≤ 5 ms (incluye reintentos de capa MAC), medido contra SOF USB.
+* **USB:** reutilizar `usb_module` del master (HID teclado NKRO + consumer + canal COMM/WebHID).
 
-#### 5.2. Saneamiento Integral de la Suite de Pruebas Unitarias (`test/`)
-* **Diagnóstico del Problema:**
-  La suite de pruebas en host local (`test/`) no compila debido a:
-  - Rutas obsoletas e inclusiones inexistentes de `usb_module` en [`test/main.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/main.c).
-  - Firmas de funciones desactualizadas en [`test/usb/test_usb_rx.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/usb/test_usb_rx.c) (`process_rx_request` cambiada a `comm_process_rx_request`).
-  - Constantes de capas estáticas ya eliminadas (`KB_LAYER_FN1`, `SYS_ACTION_LAYER_FN1`) en [`test/keyboard/test_kb_layout.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/keyboard/test_kb_layout.c).
-* **Acciones:**
-  1. **Actualizar Mocks de FreeRTOS y ESP-IDF:** Adaptar los headers simulados en `test/include/` para reflejar la API de ESP-IDF v5.5.
-  2. **Refactorizar Tests de Layouts:** Reescribir `test_kb_layout.c` para utilizar la nueva API de capas dinámicas basadas en máscaras de 16 bits (`s_momentary_layers` / `s_toggled_layers`).
-  3. **Automatizar Script de Compilación:** Corregir [`test/run_tests.sh`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/test/run_tests.sh) asegurando que incluya todos los flags de include `-I../components/...` necesarios para compilar limpiamente bajo GCC nativo en Linux y macOS.
+#### 4.3. Pantalla de estado
+* **Hardware:** **SSD1306** I²C (128×32/64) y **Nice!View (Sharp LS011B7DH03, 160×68)**; *no* LS027B7DH01 (2.7", R17).
+* **Diseño:** framebuffer 1-bpp propio + `esp_lcd` (evitar LVGL por costo de RAM/flash). Refresco **orientado a eventos** (no periódico) para respetar el presupuesto de energía; Sharp requiere toggle de VCOM (~1 Hz) incluso en estático.
+* **Datos:** capa activa, batería local/remota (usa la telemetría de 3.1), perfil BLE/USB/Dongle, Caps Lock, WPM (calculado en `kb_manager`) y RTT de `split_bench`.
 
-#### 5.3. Pipeline Automatizado de Integración Continua (CI/CD)
-* **Archivo de Configuración:** `.github/workflows/ci.yml`
-* **Etapas del Pipeline:**
-  1. **Job 1 (Host Unit Tests):** Compilación y ejecución de la suite de tests en host en un runner `ubuntu-latest` mediante GCC.
-  2. **Job 2 (ESP-IDF Firmware Build):** Utilización de la imagen oficial Docker de Espressif (`espressif/idf:v5.5`) para compilar los targets de hardware (`idf.py build`) validando que no existan advertencias ni desbordamientos de memoria DRAM.
-  3. **Job 3 (Configurator Lint & Build):** Ejecución de `npm run lint` y `npm run build` en el directorio `configurator/` para asegurar que las definiciones TypeScript concuerden con los esquemas binarios del firmware.
+#### 4.4. Sensor señalador / Trackball
+* **Driver SPI PMW3360/3389** con interrupción por pin **MOT** (en vez de polling a 500 Hz), carga de **SROM** en init y reportes por *burst read*. Requiere el pin MOT + SPI (4 pines) → **solo viable si 0.4 los asigna**.
+* **Mouse HID es trabajo nuevo (R20):** agregar el reporte en [`usb_descriptors.h`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/include/usb_descriptors.h) **y** el *report map* BLE (cambiar el report map exige re-enumeración/re-bond en hosts que lo cachean). Si el sensor está en la mitad esclava, nuevo paquete split (con `proto_version`).
 
 ---
 
-## 4. Cronograma de Ejecución y Dependencias Técnicas
+### FASE 5: Ecosistema Web y Releases
+
+#### 5.1. Actualizador de firmware in-browser
+* **Cómo entra el chip en modo descarga (corrige el diagrama de v1):** el firmware usa **TinyUSB (OTG)**, no USB-Serial-JTAG, por lo que **no hay secuencia DTR/RTS** disponible. Flujo correcto:
+  1. El configurador envía por WebHID un comando COMM `ENTER_DOWNLOAD_MODE`; el firmware fuerza el *boot* en download (`RTC_CNTL_FORCE_DOWNLOAD_BOOT` + reset).
+  2. El S3 reaparece como dispositivo USB-Serial-JTAG de la ROM (VID `303A`); el usuario lo elige en `navigator.serial.requestPort()`.
+  3. `esptool-js` flashea (la velocidad de baudios es irrelevante sobre USB nativo). Fallback manual: BOOT+RESET.
+* **Particiones (R2):** no hardcodear `0x10000`. Hoy el *factory app* está en **`0x90000`** (2 MB). Generar un `manifest.json` desde `flasher_args.json` en CI con `{offset, file, sha256}` para bootloader, partition-table y app; el flasher lo consume.
+* **Distribución:** los *assets* de GitHub Releases **no tienen CORS** desde el navegador → publicar artefactos y manifest en **GitHub Pages** (mismo origen que el configurador) o equivalente.
+* **Seguridad de datos:** flashear **solo app** (+ bootloader/ptable si cambian); **no borrar NVS** (configuración del usuario) salvo opción explícita; ofrecer *export* de configuración antes de flashear. Comprobar versión firmware↔configurador vía handshake COMM.
+* **Evaluación de OTA (alternativa):** sin particiones OTA hoy no hay *rollback*. Pasar a `ota_0/ota_1` + `otadata` (reduciendo NVS o app) permite actualizar por USB/BLE sin modo descarga; decisión a tomar con datos de uso de flash (`idf.py size`). Si se adopta, cambia el layout y obliga a un único re-flasheo manual.
+* **Compatibilidad del navegador:** Web Serial solo en Chromium; mostrar detección y mensaje claro en Safari/Firefox.
+
+#### 5.2. Pipeline de release
+* Sobre el CI de 0.2: en *tag* `vX.Y.Z` → build reproducible (imagen IDF fijada), `manifest.json` + binarios + `sha256` + notas de versión → publicación en Pages y GitHub Release. El configurador lee el manifest para listar versiones.
+
+---
+
+## 4. Cronograma y Dependencias
 
 ```mermaid
 gantt
-    title Cronograma de Implementación de Fases
+    title Cronograma (estimaciones con 20% de buffer incluido)
     dateFormat  YYYY-MM-DD
-    section Fase 1: Core & Concurrencia
-    Despacho Asíncrono HID/BLE       :f1_1, 2026-10-15, 4d
-    Bugfix Custom Keys Split (120)  :f1_2, after f1_1, 2d
-    Consolidación Tareas FreeRTOS    :f1_3, after f1_2, 4d
-    Atómicas en Capas Dinámicas      :f1_4, after f1_3, 2d
-    section Fase 2: Escaneo & Latencia
-    Algoritmo Eager Debounce (0ms)   :f2_1, after f1_4, 4d
-    Lectura Directa Silicio GPIO.in  :f2_2, after f2_1, 3d
-    Ajuste Settling Time Matriz      :f2_3, after f2_2, 2d
-    section Fase 3: Energía & Batería
-    Driver ADC Batería eFuse         :f3_1, after f2_3, 5d
-    Integración BLE BAS & Telemetría :f3_2, after f3_1, 3d
-    DFS y Light-Sleep con Wakeup     :f3_3, after f3_2, 6d
-    section Fase 4: Periféricos
-    Dongle USB 2.4 GHz ESP-NOW       :f4_1, after f3_3, 7d
-    Módulo Pantalla (Sharp/Nice!View):f4_2, after f4_1, 5d
-    Encoders PCNT & Trackball SPI    :f4_3, after f4_2, 5d
-    Home-Row Mods Tap-Hold           :f4_4, after f4_3, 4d
-    section Fase 5: Web & CI/CD
-    Actualizador WebSerial esptool-js:f5_1, after f4_4, 4d
-    Saneamiento Suite Tests C        :f5_2, after f5_1, 4d
-    GitHub Actions CI Pipeline       :f5_3, after f5_2, 2d
+    section Fase 0: Fundaciones
+    Sanear tests host                :f0_1, 2026-10-15, 3d
+    CI (host, build, configurator)   :f0_2, after f0_1, 2d
+    Línea base de métricas           :f0_3, after f0_1, 4d
+    Presupuesto de pines + proto_ver :f0_4, after f0_1, 3d
+    section Fase 1: Core
+    Fix sync custom keys (120)       :f1_1, after f0_2, 1d
+    Envío de reportes sin bloqueo    :f1_2, after f1_1, 4d
+    Capas atómicas                   :f1_3, after f1_2, 2d
+    Timeouts comm y tap-workers      :f1_4, after f1_3, 4d
+    ISR autónomo                     :f1_5, after f1_3, 1d
+    section Fase 2: Latencia
+    Settling parametrizable (medido) :f2_1, after f1_5, 3d
+    Eager Debounce                   :f2_2, after f2_1, 2d
+    Lectura GPIO directa             :f2_3, after f2_2, 2d
+    Tap-Hold con flavors (FW + UI)   :f2_4, after f2_2, 8d
+    section Fase 3: Energía
+    Spike de viabilidad              :f3_0, after f2_4, 3d
+    Driver de batería                :f3_1, after f3_0, 4d
+    power_mgr (DFS + light/deep)     :f3_2, after f3_1, 8d
+    section Fase 4: Hardware
+    Encoders                         :f4_1, after f3_2, 4d
+    Dongle (multi-peer)              :f4_2, after f4_1, 12d
+    Display                          :f4_3, after f4_2, 6d
+    Trackball                        :f4_4, after f4_3, 8d
+    section Fase 5: Web
+    Flasher esptool-js + manifest    :f5_1, after f3_2, 6d
+    Pipeline de release              :f5_2, after f5_1, 2d
 ```
 
+* La Fase 5 puede avanzar **en paralelo a la Fase 4** (solo depende del CI y de la estabilidad de la Fase 3).
+* Si 3.0 resulta negativo, 3.2 se reduce a DFS y se libera tiempo para 4.x.
+
 ---
 
-## 5. Matriz de Validación y Criterios de Aceptación
+## 5. Riesgos y Mitigaciones
 
-| Métrica / Prueba | Estado Actual (Línea Base) | Objetivo de Aceptación (Post-Implementación) | Método de Medición |
+| Riesgo | Prob. | Impacto | Mitigación |
 |---|---|---|---|
-| **Latencia de Escaneo de Pulsación** | 5.0 ms (Filtro simétrico 5 ciclos) | **< 0.5 ms (Eager Debounce 0 ms)** | Analizador lógico Saleae en interruptor físico vs paquete USB SOF. |
-| **Tiempo de Bloqueo por Desconexión** | Hasta 100 ms síncrono en bucle | **0 ms (Despacho no-bloqueante por cola)** | Profiler de ejecución de tareas FreeRTOS / Traza de `vTaskDelay`. |
-| **Sincronización Custom Keys Split** | Limitado a 64 claves | **120 claves completas sincronizadas** | Test de ráfaga y verificación de memoria NVS en mitad esclava. |
-| **Consumo de Batería en Reposo** | ~70 mA (Reloj fijo a 240 MHz) | **< 2.5 mA en Light Sleep (< 20 µA Deep)** | Multímetro digital de precisión / Nordic Power Profiler Kit II. |
-| **Reporte de Batería en Sistema** | Valor constante `0xFF` | **0 a 100% calibrado por eFuse** | Inspección de servicio BLE BAS en Bluetooth Explorer / OS Battery Widget. |
-| **Latencia Inalámbrica de Escritura** | 8 a 15 ms (Intervalo de conexión BLE) | **< 1.5 ms con Dongle USB 2.4 GHz** | Sondeo de paquetes HID de 1000 Hz sobre ESP-NOW. |
-| **Compilación de Tests en Host** | Falla de compilación por bitrot | **100% de tests pasando en GCC (`run_tests.sh`)** | Ejecución local y verificación en pipeline de GitHub Actions. |
+| Light sleep incompatible con BLE+ESP-NOW de baja latencia | Alta | Alto | Spike 3.0 como gate; fallback a DFS/tickless |
+| Settling reducido causa *ghosting*/*misses* | Media | Alto | Kconfig + banco de estrés + rollback inmediato |
+| Eager debounce expone EMI | Media | Medio | `press_confirm_scans` configurable |
+| DRAM interna agotada al añadir features | Media | Alto | Guardia de CI con `size-components`; mover buffers a PSRAM |
+| Falta de pin ADC / pines para periféricos | **Alta** | Alto | Decisión de hardware en 0.4 antes de codificar |
+| Cambio de report map BLE obliga a re-bond | Media | Medio | Aviso en el configurador; ventana de migración |
+| Flasheo con layout sin OTA bloquea el teclado | Baja | Alto | ROM bootloader siempre recuperable; manifest con sha256; export de config |
 
 ---
 
-## 6. Siguientes Pasos Inmediatos
+## 6. Definition of Done (por fase)
 
-1. Aprobar la estructura de fases y dependencias detallada en este documento.
-2. Iniciar la ejecución de la **Fase 1** comenzando con el desacoplamiento asíncrono en [`kb_macro.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c) y la corrección del bucle de claves en [`split_config_sync.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_config_sync.c).
-3. Mantener los cambios agrupados por *commits* atómicos dentro de la rama `firmware-evolution`.
+1. `bash test/run_tests.sh` → 0 fallos (incluye `--asan`); nuevos tests para cada cambio.
+2. `idf.py build` sin warnings nuevos; `size-components` sin regresión de DRAM libre.
+3. Configurador: `npm run lint && npm run build` verdes si hay cambios de esquema.
+4. Métrica asociada **medida** y registrada en `implementations/baseline/`.
+5. Documentación actualizada: `*_MODULE.md` del componente y, si cambia la arquitectura, `universe/modules/`. Cambios de esquema/protocolo reflejados en [`COMM_PROTOCOL.md`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/COMM_PROTOCOL.md).
+6. Commits atómicos en `firmware-evolution`; Kconfig de rollback documentado.
+
+---
+
+## 7. Matriz de Validación y Criterios de Aceptación
+
+| Métrica | Línea base (a medir en 0.3) | Objetivo | Método |
+|---|---|---|---|
+| **Latencia interna de pulsación** (matriz → pin debug) | ~4–5 ms (debounce 5 scans) | **p99 < 1.2 ms** | Analizador lógico: interruptor ↔ pin debug |
+| **Latencia a USB** | medir | p99 < 2.5 ms (SOF 1 ms) | Interruptor ↔ SOF |
+| **CPU del core de scan con teclas activas** | ~36 % (20 µs × 18) | **< 15 %** | `vTaskGetRunTimeStats` |
+| **Bloqueo del scan loop por transporte caído** | hasta 100 ms | **< 1 período de scan** (p99 < 2×) | Histograma en `kb_macro_send_report` |
+| **Teclas pegadas tras fallo de reporte** | posible hasta keepalive | **0** (reintento por `s_report_pending`) | Test host + HW con USB desconectado |
+| **Sync custom keys split** | 64 / 120 | **120 / 120** + `push_all` < 10 s | Checksum NVS en esclavo |
+| **Autonomía/consumo (inalámbrico idle)** | medir con PPK2 | Definido tras spike 3.0 (hipótesis 1.5–2.5 mA light sleep) | PPK2 |
+| **Latencia 1ª pulsación desde Light Sleep** | n/a | Definido tras spike 3.0 (< 10 ms deseable) | Analizador lógico |
+| **Reporte de batería** | `0xFF` | **0–100 % monótono**, error < ±5 % vs. descarga real | Descarga completa con datalogger |
+| **Latencia inalámbrica con Dongle** | BLE 8–15 ms | **p50 ≤ 2 ms, p99 ≤ 5 ms** | Interruptor ↔ SOF USB del dongle |
+| **Tests en host** | No compila | **100 % pasando** en CI | `run_tests.sh` + GitHub Actions |
+| **Flasher web** | n/a | Flasheo OK desde Chrome sin NVS borrado; sha256 verificado | Prueba en 3 SO |
+
+---
+
+## 8. Siguientes Pasos Inmediatos
+
+1. Aprobar esta versión del plan (en particular: **decisiones abiertas** abajo).
+2. Ejecutar **Fase 0** completa; el primer commit de código funcional es el fix de custom keys (1.1) apenas el CI esté verde.
+3. Mantener los cambios en commits atómicos dentro de `firmware-evolution`.
+
+### Decisiones abiertas para el equipo
+* **Hardware:** ¿qué pin/estrategia para la batería (columna sacrificada, fuel-gauge I²C o revisión de PCB)? ¿PSRAM Quad u Octal (define GPIO33–37)?
+* **Flash layout:** ¿migrar a OTA A/B (afecta NVS/app de 2 MB) o mantener `factory` + flasher in-browser?
+* **Dongle:** ¿se acepta que sea una variante del master (recomendado) o se prefiere un firmware independiente?
+* **Alcance Fase 4:** ¿display y trackball son requisito de producto o *nice-to-have* (pueden quedar fuera del primer release)?
