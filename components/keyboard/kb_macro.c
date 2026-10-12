@@ -662,7 +662,7 @@ void kb_macro_init(void) {
                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     for (int i = 0; i < 4; i++) {
-        char name[12];
+        char name[16];
         snprintf(name, sizeof(name), "kb_tap_%d", i);
         xTaskCreateWithCaps(tap_worker_task, name, 3072, NULL, 4, NULL,
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

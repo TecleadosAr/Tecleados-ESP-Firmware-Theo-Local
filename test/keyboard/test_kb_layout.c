@@ -200,3 +200,87 @@ TEST_CASE(kb_layout, all_corners_valid) {
 
     TEST_ASSERT_EQUAL_HEX(ACTION_CODE_NONE, cfg_layout_get_action_code(KB_MATRIX_ROW_COUNT, KB_MATRIX_COL_COUNT, 0));
 }
+
+#include <pthread.h>
+
+TEST_CASE(kb_layout, layer_mask_atomic_operations) {
+    kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+
+    // Momentary press and release
+    kb_macro_process_action(ACTION_CODE_LAYER_MOMENTARY + 2, true);
+    TEST_ASSERT_EQUAL((1 << KB_LAYER_BASE) | (1 << 2), kb_macro_get_layer_mask());
+    kb_macro_process_action(ACTION_CODE_LAYER_MOMENTARY + 2, false);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+
+    // Toggle on and toggle off
+    kb_macro_process_action(ACTION_CODE_LAYER_TOGGLE + 3, true);
+    TEST_ASSERT_EQUAL((1 << KB_LAYER_BASE) | (1 << 3), kb_macro_get_layer_mask());
+    kb_macro_process_action(ACTION_CODE_LAYER_TOGGLE + 3, true);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+
+    // Explicit Layer ON and OFF
+    kb_macro_process_action(ACTION_CODE_LAYER_ON + 4, true);
+    TEST_ASSERT_EQUAL((1 << KB_LAYER_BASE) | (1 << 4), kb_macro_get_layer_mask());
+    kb_macro_process_action(ACTION_CODE_LAYER_OFF + 4, true);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+
+    // Clear all
+    kb_macro_process_action(ACTION_CODE_LAYER_TOGGLE + 1, true);
+    kb_macro_process_action(ACTION_CODE_LAYER_ON + 2, true);
+    kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+}
+
+TEST_CASE(kb_layout, layer_mask_purge_deleted_layer) {
+    kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
+    mock_nvs_reset();
+    cfg_layout_load_all();
+
+    // Toggle layer 5 (which does not exist in config)
+    kb_macro_process_action(ACTION_CODE_LAYER_TOGGLE + 5, true);
+    TEST_ASSERT((kb_macro_get_layer_mask() & (1 << 5)) != 0);
+
+    // Purge deleted layers
+    kb_macro_purge_deleted_layers();
+    TEST_ASSERT_EQUAL(0, kb_macro_get_layer_mask() & (1 << 5));
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+}
+
+static void *thread_layer_toggle_hammer(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 5000; i++) {
+        kb_macro_process_action(ACTION_CODE_LAYER_TOGGLE + 1, true);
+        kb_macro_process_action(ACTION_CODE_LAYER_MOMENTARY + 2, true);
+        volatile uint16_t mask = kb_macro_get_layer_mask();
+        (void)mask;
+        kb_macro_process_action(ACTION_CODE_LAYER_MOMENTARY + 2, false);
+    }
+    return NULL;
+}
+
+static void *thread_layer_on_off_hammer(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 5000; i++) {
+        kb_macro_process_action(ACTION_CODE_LAYER_ON + 3, true);
+        volatile uint16_t mask = kb_macro_get_layer_mask();
+        (void)mask;
+        kb_macro_process_action(ACTION_CODE_LAYER_OFF + 3, true);
+    }
+    return NULL;
+}
+
+TEST_CASE(kb_layout, layer_mask_multithreaded_hammer) {
+    kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
+    pthread_t t1, t2;
+    int r1 = pthread_create(&t1, NULL, thread_layer_toggle_hammer, NULL);
+    int r2 = pthread_create(&t2, NULL, thread_layer_on_off_hammer, NULL);
+    TEST_ASSERT_EQUAL(0, r1);
+    TEST_ASSERT_EQUAL(0, r2);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    // Cleanup
+    kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
+    TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+}
+
