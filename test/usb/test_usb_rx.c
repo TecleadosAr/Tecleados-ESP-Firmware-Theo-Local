@@ -83,6 +83,31 @@ TEST_CASE(usb_rx, blast_receive_and_bitmap) {
     TEST_ASSERT_EQUAL(sizeof(comm_packet_header_t) + 1 + 1, bitmap_len);
 }
 
+TEST_CASE(usb_rx, blast_receive_out_of_order) {
+    /* Enter blast mode: 4 packets total (rem=3 -> index 0) */
+    uint8_t p0[10] = {0};
+    send_rx_packet(PAYLOAD_FLAG_FIRST, 3, p0, sizeof(p0));
+
+    /* Send packet index 2 (rem=1) before packet index 1 (rem=2) */
+    uint8_t p2[10] = {0x22};
+    send_rx_packet(PAYLOAD_FLAG_MID, 1, p2, sizeof(p2));
+
+    /* Bitmap should show bits 0 and 2 set = 0x05 */
+    uint8_t bitmap[COMM_REPORT_SIZE] = {0};
+    uint16_t bitmap_len = 0;
+    comm_rx_blast_build_bitmap_response(bitmap, &bitmap_len);
+    TEST_ASSERT_EQUAL_HEX(0x05, bitmap[sizeof(comm_packet_header_t)]);
+
+    /* Now send missing packet index 1 (rem=2) */
+    uint8_t p1[10] = {0x11};
+    send_rx_packet(PAYLOAD_FLAG_MID, 2, p1, sizeof(p1));
+
+    /* Bitmap should now show bits 0, 1, and 2 set = 0x07 */
+    memset(bitmap, 0, sizeof(bitmap));
+    comm_rx_blast_build_bitmap_response(bitmap, &bitmap_len);
+    TEST_ASSERT_EQUAL_HEX(0x07, bitmap[sizeof(comm_packet_header_t)]);
+}
+
 TEST_CASE(usb_rx, blast_duplicate_ignored) {
     /* Enter blast mode: 2 packets total (rem=1) */
     uint8_t p0[5] = {0xAA};
@@ -136,6 +161,42 @@ TEST_CASE(usb_rx, blast_commit_assembles_full_payload) {
     TEST_ASSERT_TRUE(s_mock_rx_callback_called);
 }
 
+TEST_CASE(usb_rx, large_blast_multiple_mid_packets) {
+    s_mock_rx_callback_called = false;
+    comm_register_module(MODULE_CONFIG, mock_config_callback);
+
+    /* Enter blast mode: 5 packets total (rem=4) */
+    uint8_t p0[20];
+    p0[0] = (uint8_t)MODULE_CONFIG;
+    memset(p0 + 1, 0x10, 19);
+    send_rx_packet(PAYLOAD_FLAG_FIRST, 4, p0, sizeof(p0));
+
+    /* Send 3 MID packets (indices 1, 2, 3 with rem = 3, 2, 1) */
+    for (int i = 1; i <= 3; i++) {
+        uint8_t p_mid[20];
+        memset(p_mid, (uint8_t)(0x10 * (i + 1)), sizeof(p_mid));
+        send_rx_packet(PAYLOAD_FLAG_MID, 4 - i, p_mid, sizeof(p_mid));
+    }
+
+    /* Bitmap should show bits 0-3 set = 0x0F */
+    uint8_t bitmap[COMM_REPORT_SIZE] = {0};
+    uint16_t bitmap_len = 0;
+    comm_rx_blast_build_bitmap_response(bitmap, &bitmap_len);
+    TEST_ASSERT_EQUAL_HEX(0x0F, bitmap[sizeof(comm_packet_header_t)]);
+
+    /* Commit with LAST packet (index 4, rem=0) */
+    uint8_t p_last[COMM_REPORT_SIZE] = {0};
+    comm_packet_header_t *hdr_last = (comm_packet_header_t *)p_last;
+    hdr_last->flags = PAYLOAD_FLAG_LAST;
+    hdr_last->remaining_packets = 0;
+    hdr_last->payload_len = 10;
+    memset(p_last + sizeof(comm_packet_header_t), 0x55, 10);
+    comm_rx_blast_commit(COMM_TRANSPORT_USB, p_last, sizeof(comm_packet_header_t) + 10);
+
+    TEST_ASSERT_FALSE(comm_rx_blast_active());
+    TEST_ASSERT_TRUE(s_mock_rx_callback_called);
+}
+
 /* ---- Erase ---- */
 
 TEST_CASE(usb_rx, erase_clears_all_state) {
@@ -161,6 +222,23 @@ TEST_CASE(usb_rx, timestamp_updated_on_receive) {
 
     /* Timestamp should be updated to latest */
     TEST_ASSERT_EQUAL(8000, comm_rx_get_last_packet_timestamp_us());
+}
+
+/* ---- Bitmap response byte count ---- */
+
+TEST_CASE(usb_rx, bitmap_response_correct_byte_count) {
+    /* Enter blast mode with 10 packets total (rem=9) */
+    uint8_t p0[10] = {0};
+    send_rx_packet(PAYLOAD_FLAG_FIRST, 9, p0, sizeof(p0));
+
+    uint8_t bitmap[COMM_REPORT_SIZE] = {0};
+    uint16_t bitmap_len = 0;
+    comm_rx_blast_build_bitmap_response(bitmap, &bitmap_len);
+
+    comm_packet_header_t *hdr = (comm_packet_header_t *)bitmap;
+    /* 10 packets = ceil(10/8) = 2 bytes */
+    TEST_ASSERT_EQUAL(2, hdr->payload_len);
+    TEST_ASSERT_EQUAL(0, hdr->remaining_packets);
 }
 
 /* ---- Constants ---- */
