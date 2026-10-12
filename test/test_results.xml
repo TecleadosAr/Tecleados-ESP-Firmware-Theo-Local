@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites tests="134" failures="0" time="0">
+<testsuites tests="144" failures="0" time="0">
   <testsuite name="kb_state" tests="8" failures="0">
     <testcase name="init_sets_zero" classname="kb_state" time="0.0000"/>
     <testcase name="update_caps_lock" classname="kb_state" time="0.0000"/>
@@ -11,7 +11,7 @@
     <testcase name="all_leds_on" classname="kb_state" time="0.0000"/>
   </testsuite>
   <testsuite name="kb_report" tests="18" failures="0">
-    <testcase name="send_report_empty_nkro" classname="kb_report" time="0.0000"/>
+    <testcase name="send_report_empty_nkro" classname="kb_report" time="0.0001"/>
     <testcase name="send_report_single_key" classname="kb_report" time="0.0000"/>
     <testcase name="send_report_modifier_only" classname="kb_report" time="0.0000"/>
     <testcase name="send_report_six_keys_plus_modifier" classname="kb_report" time="0.0000"/>
@@ -47,6 +47,12 @@
     <testcase name="nvs_base_layer_override" classname="kb_layout" time="0.0000"/>
     <testcase name="all_corners_valid" classname="kb_layout" time="0.0000"/>
   </testsuite>
+  <testsuite name="kb_matrix" tests="4" failures="0">
+    <testcase name="no_keys_pressed_bitmap_all_zero" classname="kb_matrix" time="0.0000"/>
+    <testcase name="single_key_pressed_detected" classname="kb_matrix" time="0.0000"/>
+    <testcase name="multiple_keys_pressed_detected" classname="kb_matrix" time="0.0000"/>
+    <testcase name="mirrored_cols_detected" classname="kb_matrix" time="0.0000"/>
+  </testsuite>
   <testsuite name="kb_system_action" tests="12" failures="0">
     <testcase name="press_fires_press_event" classname="kb_system_action" time="0.0000"/>
     <testcase name="release_fires_release_event" classname="kb_system_action" time="0.0000"/>
@@ -74,15 +80,18 @@
     <testcase name="zero_payload_has_nonzero_crc_byte" classname="usb_crc" time="0.0000"/>
     <testcase name="single_nonzero_byte_round_trip" classname="usb_crc" time="0.0000"/>
   </testsuite>
-  <testsuite name="usb_rx" tests="9" failures="0">
+  <testsuite name="usb_rx" tests="12" failures="0">
     <testcase name="packet_header_size" classname="usb_rx" time="0.0000"/>
     <testcase name="blast_entry_on_first_with_remaining" classname="usb_rx" time="0.0000"/>
     <testcase name="single_packet_does_not_enter_blast" classname="usb_rx" time="0.0000"/>
     <testcase name="blast_receive_and_bitmap" classname="usb_rx" time="0.0000"/>
+    <testcase name="blast_receive_out_of_order" classname="usb_rx" time="0.0000"/>
     <testcase name="blast_duplicate_ignored" classname="usb_rx" time="0.0000"/>
     <testcase name="blast_commit_assembles_full_payload" classname="usb_rx" time="0.0000"/>
+    <testcase name="large_blast_multiple_mid_packets" classname="usb_rx" time="0.0000"/>
     <testcase name="erase_clears_all_state" classname="usb_rx" time="0.0000"/>
     <testcase name="timestamp_updated_on_receive" classname="usb_rx" time="0.0000"/>
+    <testcase name="bitmap_response_correct_byte_count" classname="usb_rx" time="0.0000"/>
     <testcase name="max_blast_packets" classname="usb_rx" time="0.0000"/>
   </testsuite>
   <testsuite name="event_bus" tests="10" failures="0">
@@ -97,7 +106,7 @@
     <testcase name="payload_struct_sizes" classname="event_bus" time="0.0000"/>
     <testcase name="config_update_key_fits" classname="event_bus" time="0.0000"/>
   </testsuite>
-  <testsuite name="status_module" tests="16" failures="0">
+  <testsuite name="status_module" tests="17" failures="0">
     <testcase name="init_registers_handlers" classname="status_module" time="0.0000"/>
     <testcase name="init_seeds_cache_from_ble_state" classname="status_module" time="0.0000"/>
     <testcase name="profile_connected_updates_bitmap" classname="status_module" time="0.0000"/>
@@ -114,8 +123,9 @@
     <testcase name="comm_callback_triggers_push" classname="status_module" time="0.0000"/>
     <testcase name="full_ble_event_sequence" classname="status_module" time="0.0000"/>
     <testcase name="split_connected_and_disconnected" classname="status_module" time="0.0000"/>
+    <testcase name="split_version_mismatch_event_updates_state" classname="status_module" time="0.0000"/>
   </testsuite>
-  <testsuite name="split_protocol" tests="23" failures="0">
+  <testsuite name="split_protocol" tests="25" failures="0">
     <testcase name="build_returns_correct_total_size" classname="split_protocol" time="0.0000"/>
     <testcase name="build_zero_payload" classname="split_protocol" time="0.0000"/>
     <testcase name="build_max_payload" classname="split_protocol" time="0.0000"/>
@@ -138,10 +148,12 @@
     <testcase name="discovery_payload_version_matches" classname="split_protocol" time="0.0000"/>
     <testcase name="role_negotiate_payload_version_matches" classname="split_protocol" time="0.0000"/>
     <testcase name="heartbeat_payload_version_matches" classname="split_protocol" time="0.0000"/>
-    <testcase name="version_mismatch_detected" classname="split_protocol" time="0.0000"/>
+    <testcase name="role_negotiate_valid_version_accepted" classname="split_protocol" time="0.0000"/>
+    <testcase name="role_negotiate_mismatch_version_rejected" classname="split_protocol" time="0.0000"/>
+    <testcase name="role_negotiate_truncated_payload_rejected" classname="split_protocol" time="0.0000"/>
   </testsuite>
   <testsuite name="split_crypto" tests="12" failures="0">
-    <testcase name="encrypt_decrypt_round_trip_short" classname="split_crypto" time="0.0000"/>
+    <testcase name="encrypt_decrypt_round_trip_short" classname="split_crypto" time="0.0001"/>
     <testcase name="encrypt_decrypt_empty_payload" classname="split_crypto" time="0.0000"/>
     <testcase name="decrypt_wrong_mic_fails" classname="split_crypto" time="0.0000"/>
     <testcase name="different_sequences_give_different_ciphertext" classname="split_crypto" time="0.0000"/>
