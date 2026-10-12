@@ -160,7 +160,7 @@ TEST_CASE(kb_report, send_report_fails_when_ble_disconnected) {
 
     uint8_t nkro[NKRO_BITMAP_BYTES] = {0};
     esp_err_t err = kb_send_report(nkro);
-    TEST_ASSERT_EQUAL(ESP_FAIL, err);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, err);
 }
 
 /* ---- Consumer report routing (real kb_send_consumer_report) ---- */

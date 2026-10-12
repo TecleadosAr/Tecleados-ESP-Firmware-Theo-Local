@@ -8,12 +8,19 @@
  * Production code linked via main.c (#include "../../components/split/split_protocol.c").
  */
 #include "test_harness.h"
-/* split_protocol.h is already included transitively via split_protocol.c in main.c */
-#include "../../components/split/split_protocol.h"
+#include "split_protocol.h"
 
 /* ---- Helpers ---- */
 
 static uint8_t s_buf[SPLIT_ESP_NOW_MAX + 16]; /* +16 for overflow detection */
+
+static inline uint64_t get_seq(const split_frame_header_t *hdr) {
+    uint64_t s = 0;
+    for (int i = 0; i < 6; i++) {
+        s |= ((uint64_t)hdr->seq[i]) << (i * 8);
+    }
+    return s;
+}
 
 static size_t build(uint8_t proto, uint8_t type, uint16_t seq,
                     const uint8_t *payload, size_t plen)
@@ -70,7 +77,7 @@ TEST_CASE(split_protocol, build_header_fields_correct) {
     TEST_ASSERT_EQUAL(SPLIT_FRAME_MAGIC, hdr->magic);
     TEST_ASSERT_EQUAL(SPLIT_PROTO_SPLIT, hdr->proto);
     TEST_ASSERT_EQUAL(SPLIT_MSG_ROLE_NEGOTIATE, hdr->type);
-    TEST_ASSERT_EQUAL(0x1234, hdr->seq);
+    TEST_ASSERT_EQUAL(0x1234, get_seq(hdr));
 }
 
 TEST_CASE(split_protocol, build_payload_copied_correctly) {
@@ -131,7 +138,7 @@ TEST_CASE(split_protocol, parse_valid_frame_succeeds) {
     TEST_ASSERT_EQUAL(SPLIT_FRAME_MAGIC, hdr.magic);
     TEST_ASSERT_EQUAL(SPLIT_PROTO_SPLIT, hdr.proto);
     TEST_ASSERT_EQUAL(SPLIT_MSG_HEARTBEAT, hdr.type);
-    TEST_ASSERT_EQUAL(0xABCD, hdr.seq);
+    TEST_ASSERT_EQUAL(0xABCD, get_seq(&hdr));
     TEST_ASSERT_EQUAL(6, (int)out_len);
     TEST_ASSERT(memcmp(out_payload, payload, 6) == 0);
 }
@@ -249,7 +256,7 @@ TEST_CASE(split_protocol, round_trip_all_message_types) {
         bool ok = split_protocol_parse_frame(s_buf, len, &hdr, &out_p, &out_l);
         TEST_ASSERT_MSG(ok, "parse_frame failed on round-trip");
         TEST_ASSERT_EQUAL((int)types[t], (int)hdr.type);
-        TEST_ASSERT_EQUAL((int)t, (int)hdr.seq);
+        TEST_ASSERT_EQUAL((int)t, (int)get_seq(&hdr));
         TEST_ASSERT_EQUAL(16, (int)out_l);
         TEST_ASSERT(memcmp(out_p, payload, 16) == 0);
     }

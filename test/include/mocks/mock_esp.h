@@ -22,6 +22,13 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_ARG 0x102
 #define ESP_ERR_INVALID_SIZE 0x104
 #define ESP_ERR_NOT_FOUND       0x105
+#define ESP_ERR_NOT_SUPPORTED   0x106
+#define ESP_ERR_TIMEOUT         0x107
+#define ESP_ERR_INVALID_RESPONSE 0x108
+#define ESP_ERR_INVALID_CRC     0x109
+#define ESP_ERR_INVALID_VERSION 0x10A
+#define ESP_ERR_INVALID_MAC     0x10B
+#define ESP_ERR_NOT_ALLOWED     0x10C
 #define ESP_ERR_INVALID_STATE   0x103
 
 #define ESP_ERR_NVS_NO_FREE_PAGES 0x1100
@@ -72,9 +79,11 @@ static inline void *heap_caps_malloc(size_t size, uint32_t caps) {
     return malloc(size);
 }
 
-/* ---- strlcpy (not available on all platforms) ---- */
+/* ---- strlcpy (not available on all platforms) ----
+ * glibc >= 2.38 and the BSD/macOS libcs already declare it in <string.h>. */
 
-#ifndef strlcpy
+#if !defined(strlcpy) && !(defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 38))) \
+    && !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__) && !defined(__NetBSD__)
 static inline size_t strlcpy(char *dst, const char *src, size_t siz) {
     size_t len = strlen(src);
     if (siz > 0) {

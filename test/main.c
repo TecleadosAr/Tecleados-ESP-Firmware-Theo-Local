@@ -22,6 +22,7 @@
  * This also pulls in test_constants.h which includes production headers
  * (event_bus.h, kb_layout.h, kb_system_action.h, kb_matrix.h) via shims. */
 #include "test_harness.h"
+#include "mocks/mock_comm.h"
 
 /* ======================================================================
  * Production code — linked via single-TU #include.
@@ -42,12 +43,13 @@
 /* Production sources — ESP-IDF includes resolve to mocks via shim headers */
 #include "../../components/event_bus/event_bus.c"
 #include "../../components/keyboard/kb_state.c"
-#include "../../components/usb_module/usb_crc.c"
+#include "../../components/comm_module/comm_crc.c"
+#include "../../components/comm_module/comm_rx.c"
+#include "../../components/config_module/cfg_system.c"
 #include "../../components/keyboard/kb_report.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
 #include "../../components/config_module/cfg_layouts.c"
-#include "../../components/usb_module/usb_callbacks_rx.c"
 #include "../../components/status_module/statusmod.c"
 
 /* Split production sources — GCC/Clang only.
@@ -70,7 +72,7 @@
 #include "keyboard/test_kb_layout.c"
 #include "keyboard/test_kb_system_action.c"
 
-/* USB tests */
+/* USB / Comm tests */
 #include "usb/test_usb_crc.c"
 #include "usb/test_usb_rx.c"
 

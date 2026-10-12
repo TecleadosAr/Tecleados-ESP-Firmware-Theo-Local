@@ -1,9 +1,6 @@
 /**
  * @file cfgmod.h
- * @brief Shim — stubs for cfgmod API used by cfg_layouts.c and statusmod.c.
- *
- * Provides controllable mock behavior for NVS read/write so tests can
- * inject layer data or simulate empty storage.
+ * @brief Mock stubs for cfgmod API used by cfg_layouts.c, cfg_system.c and statusmod.c.
  */
 #pragma once
 
@@ -12,35 +9,53 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "cJSON.h"
 #include "mocks/mock_esp.h"
 
-/* ---- Kind enum (mirrors production) ---- */
+#define CFGMOD_MAX_KEY_LEN 12
 
-#ifndef _TH_CFGMOD_KIND_T
-#define _TH_CFGMOD_KIND_T
-typedef enum {
+typedef enum cfgmod_kind {
     CFGMOD_KIND_LAYOUT = 0,
     CFGMOD_KIND_MACRO,
     CFGMOD_KIND_CONNECTION,
     CFGMOD_KIND_SYSTEM,
     CFGMOD_KIND_PHYSICAL,
     CFGMOD_KIND_CKEY,
+    CFGMOD_KIND_SPLIT,
+    CFGMOD_KIND_COMBO,
+    CFGMOD_KIND_BLE_BOND,
     CFGMOD_KIND_MAX
 } cfgmod_kind_t;
-#endif
 
-/* ---- Callback signatures ---- */
+typedef enum cfgmod_key_id {
+    CFG_KEY_TEST = 0,
+    CFG_KEY_HELLO,
+    CFG_KEY_PHYSICAL_LAYOUT,
+    CFG_KEY_LAYOUTS = 0x10,
+    CFG_KEY_LAYOUT_SINGLE = 0x11,
+    CFG_KEY_LAYOUT_LIMITS = 0x12,
+    CFG_KEY_MACROS,
+    CFG_KEY_MACRO_LIMITS,
+    CFG_KEY_MACRO_SINGLE,
+    CFG_KEY_CKEYS,
+    CFG_KEY_CKEY_SINGLE,
+    CFG_KEY_SYSTEM,
+    CFG_KEY_COMBOS,
+    CFG_KEY_COMBO_SINGLE,
+    CFG_KEY_COMBO_LIMITS,
+    CFG_KEY_MAX
+} cfgmod_key_id_t;
 
-typedef void   (*cfgmod_default_fn)(void *out_struct);
-typedef bool   (*cfgmod_deserialize_fn)(cJSON *root, void *out_struct);
-typedef cJSON *(*cfgmod_serialize_fn)(const void *in_struct);
-typedef void   (*cfgmod_on_update_fn)(const char *key);
+typedef void (*cfgmod_default_fn)(void *out_struct);
+typedef void (*cfgmod_on_update_fn)(const char *key);
+typedef esp_err_t (*cfgmod_get_fn)(void *out_struct);
+typedef esp_err_t (*cfgmod_set_fn)(const void *in_struct);
+typedef esp_err_t (*cfgmod_delete_fn)(uint16_t item_id);
+typedef esp_err_t (*cfgmod_validate_fn)(void *in_struct);
 
 /* ---- Mock NVS storage ---- */
 
-#define MOCK_NVS_MAX_ENTRIES 16
-#define MOCK_NVS_MAX_SIZE   4096
+#define MOCK_NVS_MAX_ENTRIES 32
+#define MOCK_NVS_MAX_SIZE    4096
 
 typedef struct {
     cfgmod_kind_t kind;
@@ -59,7 +74,19 @@ static inline void mock_nvs_reset(void) {
 }
 
 static inline void mock_nvs_inject(cfgmod_kind_t kind, const char *key,
-                                    const void *data, size_t len) {
+                                   const void *data, size_t len) {
+    /* If key exists, update in-place */
+    for (int i = 0; i < _mock_nvs_count; i++) {
+        if (_mock_nvs_store[i].valid &&
+            _mock_nvs_store[i].kind == kind &&
+            strcmp(_mock_nvs_store[i].key, key) == 0) {
+            if (len <= MOCK_NVS_MAX_SIZE) {
+                memcpy(_mock_nvs_store[i].data, data, len);
+                _mock_nvs_store[i].len = len;
+            }
+            return;
+        }
+    }
     if (_mock_nvs_count >= MOCK_NVS_MAX_ENTRIES) return;
     mock_nvs_entry_t *e = &_mock_nvs_store[_mock_nvs_count++];
     e->kind = kind;
@@ -75,18 +102,27 @@ static inline void mock_nvs_inject(cfgmod_kind_t kind, const char *key,
 /* ---- Stubbed cfgmod API ---- */
 
 static inline esp_err_t cfgmod_register_kind(cfgmod_kind_t kind,
-                                              cfgmod_default_fn def_fn,
-                                              cfgmod_deserialize_fn des_fn,
-                                              cfgmod_serialize_fn ser_fn,
-                                              cfgmod_on_update_fn update_fn,
-                                              size_t struct_size) {
-    (void)kind; (void)def_fn; (void)des_fn; (void)ser_fn;
-    (void)update_fn; (void)struct_size;
+                                             cfgmod_default_fn def_fn,
+                                             cfgmod_on_update_fn update_fn,
+                                             size_t struct_size) {
+    (void)kind; (void)def_fn; (void)update_fn; (void)struct_size;
     return ESP_OK;
 }
 
+static inline void cfgmod_register_get_set(cfgmod_kind_t kind, cfgmod_get_fn get_fn, cfgmod_set_fn set_fn) {
+    (void)kind; (void)get_fn; (void)set_fn;
+}
+
+static inline void cfgmod_register_delete(cfgmod_kind_t kind, cfgmod_delete_fn delete_fn) {
+    (void)kind; (void)delete_fn;
+}
+
+static inline void cfgmod_register_validate(cfgmod_kind_t kind, cfgmod_validate_fn validate_fn) {
+    (void)kind; (void)validate_fn;
+}
+
 static inline esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
-                                           void *out_struct) {
+                                          void *out_struct) {
     for (int i = 0; i < _mock_nvs_count; i++) {
         if (_mock_nvs_store[i].valid &&
             _mock_nvs_store[i].kind == kind &&
@@ -99,22 +135,21 @@ static inline esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
 }
 
 static inline esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
-                                           const void *in_struct) {
-    /* Find existing or add new */
+                                          const void *in_struct) {
     for (int i = 0; i < _mock_nvs_count; i++) {
         if (_mock_nvs_store[i].valid &&
             _mock_nvs_store[i].kind == kind &&
             strcmp(_mock_nvs_store[i].key, key) == 0) {
-            /* Size is unknown here — use MOCK_NVS_MAX_SIZE as upper bound.
-               Tests should use mock_nvs_inject for controlled setups. */
+            memcpy(_mock_nvs_store[i].data, in_struct, _mock_nvs_store[i].len);
             return ESP_OK;
         }
     }
+    mock_nvs_inject(kind, key, in_struct, 512);
     return ESP_OK;
 }
 
 static inline esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
-                                             void *out_buf, size_t *inout_len) {
+                                            void *out_buf, size_t *inout_len) {
     for (int i = 0; i < _mock_nvs_count; i++) {
         if (_mock_nvs_store[i].valid &&
             _mock_nvs_store[i].kind == kind &&
@@ -130,8 +165,20 @@ static inline esp_err_t cfgmod_read_storage(cfgmod_kind_t kind, const char *key,
 }
 
 static inline esp_err_t cfgmod_write_storage(cfgmod_kind_t kind, const char *key,
-                                              const void *data, size_t len) {
+                                             const void *data, size_t len) {
     mock_nvs_inject(kind, key, data, len);
+    return ESP_OK;
+}
+
+static inline esp_err_t cfgmod_delete_storage(cfgmod_kind_t kind, const char *key) {
+    for (int i = 0; i < _mock_nvs_count; i++) {
+        if (_mock_nvs_store[i].valid &&
+            _mock_nvs_store[i].kind == kind &&
+            strcmp(_mock_nvs_store[i].key, key) == 0) {
+            _mock_nvs_store[i].valid = false;
+            return ESP_OK;
+        }
+    }
     return ESP_OK;
 }
 

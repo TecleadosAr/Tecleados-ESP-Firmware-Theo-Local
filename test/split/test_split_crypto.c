@@ -14,8 +14,7 @@
  *
  * Production code linked via main.c.
  */
-#include "test_harness.h"
-#include "../../components/split/split_crypto.h"
+#include "split_crypto.h"
 
 /* =========================================================================
  * AES-128-CCM encrypt/decrypt round-trips

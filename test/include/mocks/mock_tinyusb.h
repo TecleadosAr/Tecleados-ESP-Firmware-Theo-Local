@@ -1,9 +1,14 @@
 /**
  * @file mock_tinyusb.h
- * @brief Mock TinyUSB and BLE module APIs for host testing.
+ * @brief Mock TinyUSB, usb_module and BLE-HID module APIs for host testing.
  *
  * Tracks calls to USB/BLE send functions and allows tests to control
  * the return values and connection state.
+ *
+ * The BLE functions are deliberately NON-static: production `blemod.h`
+ * (included as-is by kb_report.c / statusmod.c) declares them with external
+ * linkage, and a `static` definition would be a redeclaration error. The test
+ * runner is a single translation unit, so a plain definition here is fine.
  */
 #pragma once
 
@@ -123,7 +128,7 @@ static inline bool usb_send_consumer_report(uint16_t keycode) {
     return true;
 }
 
-/* ---- BLE module stubs ---- */
+/* ---- BLE module stubs (see note at top: intentionally non-static) ---- */
 
 static bool _mock_ble_routing_active = false;
 static bool _mock_ble_connected = false;
@@ -131,69 +136,49 @@ static uint16_t _mock_ble_connected_bitmap = 0;
 static int _mock_ble_pairing_profile = -1;
 static int _mock_ble_send_count = 0;
 
-static inline bool ble_hid_is_routing_active(void) { return _mock_ble_routing_active; }
-static inline bool ble_hid_is_connected(void)      { return _mock_ble_connected; }
-static inline uint16_t ble_hid_get_connected_profiles_bitmap(void) { return _mock_ble_connected_bitmap; }
-static inline int ble_hid_get_pairing_profile(void) { return _mock_ble_pairing_profile; }
+bool ble_hid_is_routing_active(void) { return _mock_ble_routing_active; }
+bool ble_hid_is_connected(void)      { return _mock_ble_connected; }
+uint16_t ble_hid_get_connected_profiles_bitmap(void) { return _mock_ble_connected_bitmap; }
+int ble_hid_get_pairing_profile(void) { return _mock_ble_pairing_profile; }
 
-static inline esp_err_t ble_hid_send_keyboard_report(const uint8_t *report, size_t len) {
+esp_err_t ble_hid_send_keyboard_report(const uint8_t *report, size_t len) {
     (void)report; (void)len;
     _mock_ble_send_count++;
     return ESP_OK;
 }
 
-static inline esp_err_t ble_hid_send_consumer_report(uint16_t keycode) {
+esp_err_t ble_hid_send_consumer_report(uint16_t keycode) {
     (void)keycode;
     _mock_ble_send_count++;
     return ESP_OK;
 }
 
-static inline void ble_hid_set_routing_active(bool active) { _mock_ble_routing_active = active; }
-static inline void ble_hid_profile_pair(uint8_t id) { (void)id; }
-static inline void ble_hid_profile_connect_and_select(uint8_t id) { (void)id; }
-static inline void ble_hid_profile_toggle_connection(uint8_t id) { (void)id; }
+void ble_hid_set_routing_active(bool active) { _mock_ble_routing_active = active; }
+void ble_hid_profile_pair(uint8_t id) { (void)id; }
+void ble_hid_profile_connect_and_select(uint8_t id) { (void)id; }
+void ble_hid_profile_toggle_connection(uint8_t id) { (void)id; }
 
-/* ---- USB callback registration ---- */
+#include "splitmod.h"
 
-#ifndef _TH_USB_MSG_MODULE_T
-#define _TH_USB_MSG_MODULE_T
-typedef enum {
-    MODULE_CONFIG = 0,
-    MODULE_SYSTEM,
-    MODULE_ACTION,
-    MODULE_STATUS,
-    USB_MODULE_COUNT
-} usb_msg_module_t;
-#endif
+/* ---- Split module stubs ---- */
 
-#ifndef _TH_USB_DATA_CALLBACK_T
-#define _TH_USB_DATA_CALLBACK_T
-typedef bool (*usb_data_callback_t)(uint8_t *data, uint16_t data_len);
-#endif
-static usb_data_callback_t _mock_usb_callbacks[USB_MODULE_COUNT] = {0};
+static split_role_t _mock_split_role = SPLIT_ROLE_NONE;
+static split_state_t _mock_split_state = SPLIT_STATE_DISABLED;
 
-static inline void usbmod_register_callback(usb_msg_module_t module, usb_data_callback_t cb) {
-    if (module < USB_MODULE_COUNT) _mock_usb_callbacks[module] = cb;
+split_role_t splitmod_get_role(void) { return _mock_split_role; }
+split_status_t splitmod_get_status(void) {
+    split_status_t st = {
+        .state = _mock_split_state,
+        .role = _mock_split_role,
+        .peer_mac = {0},
+        .rssi = 0,
+        .latency_us = 0,
+    };
+    return st;
 }
 
-static inline bool execute_callback(usb_msg_module_t module, uint8_t *data, uint16_t len) {
-    if (module < USB_MODULE_COUNT && _mock_usb_callbacks[module]) {
-        return _mock_usb_callbacks[module](data, len);
-    }
-    return false;
-}
-
-/* ---- send_payload stub ---- */
-static uint8_t _mock_tx_payload[32000];
-static uint16_t _mock_tx_payload_len = 0;
-
-static inline bool send_payload(const uint8_t *payload, uint16_t payload_len) {
-    if (payload_len <= sizeof(_mock_tx_payload)) {
-        memcpy(_mock_tx_payload, payload, payload_len);
-        _mock_tx_payload_len = payload_len;
-    }
-    return true;
-}
+void mock_split_set_role(split_role_t role) { _mock_split_role = role; }
+void mock_split_set_state(split_state_t state) { _mock_split_state = state; }
 
 /* ---- Reset ---- */
 
@@ -207,6 +192,6 @@ static inline void mock_usb_reset(void) {
     _mock_ble_connected_bitmap = 0;
     _mock_ble_pairing_profile = -1;
     _mock_ble_send_count = 0;
-    memset(_mock_usb_callbacks, 0, sizeof(_mock_usb_callbacks));
-    _mock_tx_payload_len = 0;
+    _mock_split_role = SPLIT_ROLE_NONE;
+    _mock_split_state = SPLIT_STATE_DISABLED;
 }
