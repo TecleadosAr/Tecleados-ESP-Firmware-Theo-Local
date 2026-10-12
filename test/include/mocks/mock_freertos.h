@@ -89,7 +89,7 @@ static inline uint32_t ulTaskNotifyTake(BaseType_t clear, TickType_t timeout) {
 static inline BaseType_t xTaskNotifyGive(TaskHandle_t task) {
     (void)task; return pdPASS;
 }
-#define portYIELD_FROM_ISR(x) (void)(x)
+#define portYIELD_FROM_ISR(...) ((void)0)
 
 /* ---- Semaphore (with state tracking) ---- */
 

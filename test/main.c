@@ -50,6 +50,7 @@
 #include "../../components/keyboard/kb_telemetry.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
+#include "../../components/keyboard/kb_matrix.c"
 #include "../../components/config_module/cfg_layouts.c"
 #include "../../components/status_module/statusmod.c"
 
@@ -59,6 +60,7 @@
 #ifndef _MSC_VER
 #include "../../components/split/split_protocol.c"
 #include "../../components/split/split_crypto.c"
+#include "../../components/split/split_role.c"
 #endif
 
 #undef TAG
@@ -71,6 +73,7 @@
 #include "keyboard/test_kb_state.c"
 #include "keyboard/test_kb_report.c"
 #include "keyboard/test_kb_layout.c"
+#include "keyboard/test_kb_matrix.c"
 #include "keyboard/test_kb_system_action.c"
 
 /* USB / Comm tests */

@@ -72,6 +72,7 @@ void kb_matrix_scan(uint8_t *out_matrix_bitmap, bool mirror_cols) {
 	memset(out_matrix_bitmap, 0, total_bytes);
 
 	for (size_t c = 0; c < col_count; ++c) {
+		gpio_set_level(k_cols[c].gpio, 0);
 #ifndef CONFIG_TEF_MATRIX_SETTLE_US
 #define CONFIG_TEF_MATRIX_SETTLE_US 20
 #endif

@@ -10,6 +10,8 @@
  * This file is private to the keyboard component — do not place in include/.
  */
 #pragma once
+#ifndef _KB_BITMAP_H_
+#define _KB_BITMAP_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -26,3 +28,5 @@ static inline void kb_bit_clear(uint8_t *bitmap, size_t bit_index) {
 static inline bool kb_bit_get(const uint8_t *bitmap, size_t bit_index) {
     return (bitmap[bit_index >> 3] & (uint8_t)(1U << (bit_index & 7U))) != 0;
 }
+
+#endif
