@@ -126,7 +126,7 @@ void split_bridge_apply_routing_for_role(split_role_t role)
     apply_kb_routing_for_role(role);
     // Becoming MASTER means taking over the host-facing output path — leave
     // any slave-side light sleep behind and run at full clock.
-    if (role == SPLIT_ROLE_MASTER) pm_apply_active();
+    if (role == SPLIT_ROLE_MASTER) power_mgr_activity_notify();
     apply_ble_routing_for_role(role);
 }
 
