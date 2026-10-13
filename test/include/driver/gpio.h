@@ -168,3 +168,7 @@ static inline int rtc_gpio_pullup_en(gpio_num_t gpio_num) {
     (void)gpio_num;
     return 0;
 }
+static inline int gpio_pullup_en(gpio_num_t gpio_num) {
+    (void)gpio_num;
+    return 0;
+}

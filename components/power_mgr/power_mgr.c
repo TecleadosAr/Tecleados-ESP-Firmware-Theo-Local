@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -215,8 +216,8 @@ esp_err_t power_mgr_enter_light_sleep(void) {
     /* Restore columns back to HIGH (default scanning state) */
     kb_matrix_hal_set_all_cols(1);
 
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+    uint32_t causes = esp_sleep_get_wakeup_causes();
+    if (causes & (1UL << ESP_SLEEP_WAKEUP_GPIO)) {
         /* Woken by matrix keypress */
         if (s_pm_cpu_max_lock && !s_pm_lock_acquired) {
             esp_pm_lock_acquire(s_pm_cpu_max_lock);
@@ -228,7 +229,7 @@ esp_err_t power_mgr_enter_light_sleep(void) {
     } else {
         /* Woken by timer or radio, not matrix switch */
         s_pm_state = POWER_STATE_IDLE;
-        ESP_LOGD(TAG, "Wakeup from Light Sleep via non-GPIO (%d) -> state IDLE", (int)cause);
+        ESP_LOGD(TAG, "Wakeup from Light Sleep via non-GPIO (causes 0x%" PRIx32 ") -> state IDLE", causes);
     }
 
     return err;
@@ -251,7 +252,7 @@ void power_mgr_enter_deep_sleep(void) {
     /* Enable pull-up on RTC row GPIOs 1..6 */
     uint64_t ext1_mask = 0;
     for (int gpio = 1; gpio <= 6; gpio++) {
-        rtc_gpio_pullup_en((gpio_num_t)gpio);
+        gpio_pullup_en((gpio_num_t)gpio);
         ext1_mask |= (1ULL << gpio);
     }
 

@@ -50,6 +50,10 @@ static inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause(void) {
     return _mock_sleep_wakeup_cause;
 }
 
+static inline uint32_t esp_sleep_get_wakeup_causes(void) {
+    return (1UL << _mock_sleep_wakeup_cause);
+}
+
 static inline esp_err_t esp_sleep_enable_gpio_wakeup(void) {
     _mock_gpio_wakeup_enabled = true;
     return ESP_OK;

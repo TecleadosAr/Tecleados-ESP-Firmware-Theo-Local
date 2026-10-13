@@ -34,14 +34,6 @@ static const kb_gpio_t k_cols[] = {
 	GPIO_COLS
 };
 
-static uint64_t kb_build_pin_mask(const kb_gpio_t *pins, size_t count) {
-	uint64_t mask = 0;
-	for (size_t i = 0; i < count; ++i) {
-		mask |= (1ULL << pins[i].gpio);
-	}
-	return mask;
-}
-
 static bool kb_validate_pins(const kb_gpio_t *pins, size_t count, bool output_required) {
 	bool ok = true;
 	for (size_t i = 0; i < count; ++i) {

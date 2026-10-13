@@ -15,9 +15,11 @@ typedef struct {
     gpio_num_t gpio;
 } col_hal_t;
 
+#ifndef ESP_PLATFORM
 static const gpio_num_t s_row_pins[KB_MATRIX_ROW_COUNT] = {
     GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_3, GPIO_NUM_4, GPIO_NUM_5, GPIO_NUM_6
 };
+#endif
 
 #define LOW_MASK_PIN(p)  (1UL << (p))
 #define HIGH_MASK_PIN(p) (1UL << ((p) - 32))
