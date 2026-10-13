@@ -1,21 +1,18 @@
 #include "kb_matrix_hal.h"
 #include "kb_matrix.h"
 
+#include "driver/gpio.h"
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
 #include "soc/gpio_periph.h"
 #include "soc/gpio_reg.h"
 #include "esp_rom_sys.h"
-#else
-#include "driver/gpio.h"
 #endif
 
 typedef struct {
-    bool     is_high_bank;
-    uint32_t mask;
-#ifndef ESP_PLATFORM
+    bool       is_high_bank;
+    uint32_t   mask;
     gpio_num_t gpio;
-#endif
 } col_hal_t;
 
 static const gpio_num_t s_row_pins[KB_MATRIX_ROW_COUNT] = {
@@ -35,13 +32,8 @@ static const gpio_num_t s_row_pins[KB_MATRIX_ROW_COUNT] = {
     HIGH_MASK_PIN(38) | HIGH_MASK_PIN(39) | HIGH_MASK_PIN(40) | HIGH_MASK_PIN(41) | \
     HIGH_MASK_PIN(42) )
 
-#ifdef ESP_PLATFORM
-#define COL_ENTRY_LOW(pin)  { .is_high_bank = false, .mask = LOW_MASK_PIN(pin) }
-#define COL_ENTRY_HIGH(pin) { .is_high_bank = true,  .mask = HIGH_MASK_PIN(pin) }
-#else
-#define COL_ENTRY_LOW(pin)  { .is_high_bank = false, .mask = LOW_MASK_PIN(pin), .gpio = (gpio_num_t)(pin) }
+#define COL_ENTRY_LOW(pin)  { .is_high_bank = false, .mask = LOW_MASK_PIN(pin),  .gpio = (gpio_num_t)(pin) }
 #define COL_ENTRY_HIGH(pin) { .is_high_bank = true,  .mask = HIGH_MASK_PIN(pin), .gpio = (gpio_num_t)(pin) }
-#endif
 
 static const col_hal_t s_cols[KB_MATRIX_COL_COUNT] = {
     COL_ENTRY_LOW(7),
@@ -128,4 +120,14 @@ uint8_t kb_matrix_hal_read_rows(void) {
     }
     return rows;
 #endif
+}
+
+void kb_matrix_hal_hold_all_cols(bool hold) {
+    for (size_t c = 0; c < KB_MATRIX_COL_COUNT; ++c) {
+        if (hold) {
+            gpio_hold_en(s_cols[c].gpio);
+        } else {
+            gpio_hold_dis(s_cols[c].gpio);
+        }
+    }
 }

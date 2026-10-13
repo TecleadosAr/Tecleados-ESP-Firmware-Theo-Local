@@ -78,11 +78,24 @@ typedef void (*gpio_isr_t)(void *arg);
 static uint32_t _mock_gpio_levels[64];
 static bool _mock_gpio_switch_closed[64][64]; /* [row][col] */
 
+static uint64_t _mock_gpio_held_mask = 0;
+static bool     _mock_gpio_deep_sleep_held = false;
+
 static inline void mock_gpio_reset_all(void) {
     for (int i = 0; i < 64; i++) {
         _mock_gpio_levels[i] = 1; /* default HIGH (pullup) */
     }
     memset(_mock_gpio_switch_closed, 0, sizeof(_mock_gpio_switch_closed));
+    _mock_gpio_held_mask = 0;
+    _mock_gpio_deep_sleep_held = false;
+}
+
+static inline uint64_t mock_gpio_get_held_mask(void) {
+    return _mock_gpio_held_mask;
+}
+
+static inline bool mock_gpio_get_deep_sleep_held(void) {
+    return _mock_gpio_deep_sleep_held;
 }
 
 static inline void mock_gpio_set_switch(gpio_num_t row, gpio_num_t col, bool closed) {
@@ -134,15 +147,23 @@ static inline int gpio_wakeup_disable(gpio_num_t gpio_num) {
     return 0;
 }
 static inline int gpio_hold_en(gpio_num_t gpio_num) {
-    (void)gpio_num;
+    if (gpio_num >= 0 && gpio_num < 64) {
+        _mock_gpio_held_mask |= (1ULL << gpio_num);
+    }
     return 0;
 }
 static inline int gpio_hold_dis(gpio_num_t gpio_num) {
-    (void)gpio_num;
+    if (gpio_num >= 0 && gpio_num < 64) {
+        _mock_gpio_held_mask &= ~(1ULL << gpio_num);
+    }
     return 0;
 }
-static inline void gpio_deep_sleep_hold_en(void) {}
-static inline void gpio_deep_sleep_hold_dis(void) {}
+static inline void gpio_deep_sleep_hold_en(void) {
+    _mock_gpio_deep_sleep_held = true;
+}
+static inline void gpio_deep_sleep_hold_dis(void) {
+    _mock_gpio_deep_sleep_held = false;
+}
 static inline int rtc_gpio_pullup_en(gpio_num_t gpio_num) {
     (void)gpio_num;
     return 0;

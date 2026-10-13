@@ -113,4 +113,76 @@ TEST_CASE(power_mgr, deep_sleep_qualification_and_execution) {
                              (1ULL << 4) | (1ULL << 5) | (1ULL << 6);
     TEST_ASSERT_EQUAL_HEX(expected_mask, _mock_ext1_wakeup_mask);
     TEST_ASSERT_EQUAL(ESP_EXT1_WAKEUP_ANY_LOW, _mock_ext1_wakeup_mode);
+
+    /* Column pins must be held in low state during deep sleep */
+    TEST_ASSERT(mock_gpio_get_deep_sleep_held());
+    uint64_t held_cols = mock_gpio_get_held_mask();
+    TEST_ASSERT(held_cols & (1ULL << 7));
+    TEST_ASSERT(held_cols & (1ULL << 21));
+    TEST_ASSERT(held_cols & (1ULL << 38));
+    TEST_ASSERT(held_cols & (1ULL << 42));
+
+    /* Resetting/initializing power_mgr after wake unholds all columns */
+    power_mgr_test_reset();
+    TEST_ASSERT(!mock_gpio_get_deep_sleep_held());
+    TEST_ASSERT_EQUAL(0, mock_gpio_get_held_mask());
+}
+
+TEST_CASE(power_mgr, light_sleep_non_gpio_wakeup_stays_idle) {
+    mock_sleep_reset();
+    power_mgr_test_reset();
+    power_mgr_set_usb_active(false);
+
+    /* Inactive for 30s in IDLE */
+    power_mgr_test_set_inactive_ms(5000);
+    power_mgr_update();
+    power_mgr_test_set_inactive_ms(30000);
+    TEST_ASSERT(power_mgr_can_enter_light_sleep());
+
+    /* Background timer / radio wakes up chip instead of key switch */
+    mock_sleep_set_wakeup_cause(ESP_SLEEP_WAKEUP_TIMER);
+
+    esp_err_t err = power_mgr_enter_light_sleep();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL(1, _mock_light_sleep_enter_count);
+
+    /* System must remain in IDLE with CPU lock released to avoid power thrashing */
+    TEST_ASSERT_EQUAL(POWER_STATE_IDLE, power_mgr_get_state());
+    TEST_ASSERT(!_mock_pm_lock_held);
+}
+
+TEST_CASE(power_mgr, critical_battery_triggers_deep_sleep_immediately) {
+    mock_sleep_reset();
+    battery_test_reset();
+    power_mgr_test_reset();
+    power_mgr_set_usb_active(false);
+
+    /* Zero inactivity (active typing session) */
+    power_mgr_test_set_inactive_ms(0);
+    TEST_ASSERT_EQUAL(POWER_STATE_ACTIVE, power_mgr_get_state());
+
+    /* Battery drops to 0% (e.g. 3200 mV) */
+    battery_set_mock_voltage_mv(3200);
+    TEST_ASSERT_EQUAL(0, battery_get_level_pct());
+    TEST_ASSERT(!battery_is_charging());
+
+    /* Must qualify for immediate deep sleep to protect LiPo cell */
+    TEST_ASSERT(power_mgr_can_enter_deep_sleep());
+
+    power_mgr_update();
+    TEST_ASSERT_EQUAL(1, _mock_deep_sleep_enter_count);
+    TEST_ASSERT_EQUAL(POWER_STATE_DEEP_SLEEP, power_mgr_get_state());
+}
+
+TEST_CASE(power_mgr, critical_battery_inhibited_when_usb_charging) {
+    mock_sleep_reset();
+    battery_test_reset();
+    power_mgr_test_reset();
+
+    /* Battery is empty, but plugged into USB charger */
+    battery_set_mock_voltage_mv(3200);
+    power_mgr_set_usb_active(true);
+
+    /* Deep sleep must NOT be entered while charging over USB */
+    TEST_ASSERT(!power_mgr_can_enter_deep_sleep());
 }

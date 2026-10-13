@@ -46,6 +46,14 @@ void kb_matrix_hal_set_all_cols(uint32_t level);
  */
 uint8_t kb_matrix_hal_read_rows(void);
 
+/**
+ * @brief Enable or disable pad hold for all column pins.
+ * Used during deep sleep to keep columns held LOW so any keypress pulls rows LOW.
+ *
+ * @param hold true to enable gpio_hold_en on all columns, false to disable.
+ */
+void kb_matrix_hal_hold_all_cols(bool hold);
+
 #ifdef __cplusplus
 }
 #endif

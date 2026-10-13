@@ -7,13 +7,27 @@
 #include "esp_timer.h"
 #include "esp_pm.h"
 #include "esp_sleep.h"
+#include "esp_event.h"
 #include "driver/gpio.h"
 #include "kb_matrix_hal.h"
+#include "battery.h"
+#include "event_bus.h"
 
 #ifdef TAG
 #undef TAG
 #endif
 #define TAG "POWER_MGR"
+
+static void battery_event_handler(void *handler_args, esp_event_base_t base, int32_t id, void *event_data) {
+    (void)handler_args; (void)base;
+    if (id == BATTERY_EVENT_LEVEL_CHANGED && event_data) {
+        uint8_t level = *(const uint8_t *)event_data;
+        if (level == 0 && !power_mgr_is_usb_active() && !battery_is_charging()) {
+            ESP_LOGW(TAG, "Critical battery cutoff triggered (0%% charge)!");
+            power_mgr_enter_deep_sleep();
+        }
+    }
+}
 
 /* Configuration defaults and Kconfig fallbacks */
 #ifndef CONFIG_TEF_POWER_MGR
@@ -92,6 +106,12 @@ esp_err_t power_mgr_init(void) {
     (void)esp_pm_configure(&pm_cfg);
 #endif
 
+    /* If resuming from deep sleep, release pad holds */
+    gpio_deep_sleep_hold_dis();
+    kb_matrix_hal_hold_all_cols(false);
+
+    esp_event_handler_register(BATTERY_EVENTS, BATTERY_EVENT_LEVEL_CHANGED, &battery_event_handler, NULL);
+
     s_pm_state = POWER_STATE_ACTIVE;
     s_pm_last_activity_us = esp_timer_get_time();
     s_pm_initialized = true;
@@ -150,7 +170,17 @@ bool power_mgr_can_enter_deep_sleep(void) {
     return false;
 #else
     if (s_pm_usb_active) return false;
-    return (get_inactive_ms() >= (uint32_t)CONFIG_TEF_PM_DEEP_SLEEP_TIMEOUT_MS);
+    if (get_inactive_ms() >= (uint32_t)CONFIG_TEF_PM_DEEP_SLEEP_TIMEOUT_MS) {
+        return true;
+    }
+    /* Critical battery cutoff: 0% charge while discharging on battery */
+    if (!battery_is_charging()) {
+        uint8_t bat = battery_get_level_pct();
+        if (bat == 0) {
+            return true;
+        }
+    }
+    return false;
 #endif
 }
 
@@ -185,15 +215,22 @@ esp_err_t power_mgr_enter_light_sleep(void) {
     /* Restore columns back to HIGH (default scanning state) */
     kb_matrix_hal_set_all_cols(1);
 
-    /* Re-acquire CPU maximum frequency lock */
-    if (s_pm_cpu_max_lock && !s_pm_lock_acquired) {
-        esp_pm_lock_acquire(s_pm_cpu_max_lock);
-        s_pm_lock_acquired = true;
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+        /* Woken by matrix keypress */
+        if (s_pm_cpu_max_lock && !s_pm_lock_acquired) {
+            esp_pm_lock_acquire(s_pm_cpu_max_lock);
+            s_pm_lock_acquired = true;
+        }
+        s_pm_state = POWER_STATE_ACTIVE;
+        s_pm_last_activity_us = esp_timer_get_time();
+        ESP_LOGD(TAG, "Wakeup from Light Sleep via GPIO -> state ACTIVE");
+    } else {
+        /* Woken by timer or radio, not matrix switch */
+        s_pm_state = POWER_STATE_IDLE;
+        ESP_LOGD(TAG, "Wakeup from Light Sleep via non-GPIO (%d) -> state IDLE", (int)cause);
     }
-    s_pm_state = POWER_STATE_ACTIVE;
-    s_pm_last_activity_us = esp_timer_get_time();
 
-    ESP_LOGD(TAG, "Wakeup from Light Sleep -> state ACTIVE");
     return err;
 #endif
 }
@@ -206,8 +243,9 @@ void power_mgr_enter_deep_sleep(void) {
         return;
     }
 
-    /* Keep columns driven LOW during deep sleep */
+    /* Keep columns driven LOW and held during deep sleep */
     kb_matrix_hal_set_all_cols(0);
+    kb_matrix_hal_hold_all_cols(true);
     gpio_deep_sleep_hold_en();
 
     /* Enable pull-up on RTC row GPIOs 1..6 */
@@ -232,6 +270,12 @@ void power_mgr_update(void) {
 #if CONFIG_TEF_POWER_MGR
     uint32_t inactive_ms = get_inactive_ms();
 
+    /* Check deep sleep eligibility (15 min inactivity or critical battery cutoff) */
+    if (!s_pm_usb_active && power_mgr_can_enter_deep_sleep()) {
+        power_mgr_enter_deep_sleep();
+        return;
+    }
+
     if (s_pm_state == POWER_STATE_ACTIVE) {
         if (inactive_ms >= (uint32_t)CONFIG_TEF_PM_IDLE_TIMEOUT_MS) {
             if (s_pm_cpu_max_lock && s_pm_lock_acquired) {
@@ -240,10 +284,6 @@ void power_mgr_update(void) {
             }
             s_pm_state = POWER_STATE_IDLE;
             ESP_LOGD(TAG, "Inactivity timeout: ACTIVE -> IDLE");
-        }
-    } else if (s_pm_state == POWER_STATE_IDLE) {
-        if (!s_pm_usb_active && power_mgr_can_enter_deep_sleep()) {
-            power_mgr_enter_deep_sleep();
         }
     }
 #endif

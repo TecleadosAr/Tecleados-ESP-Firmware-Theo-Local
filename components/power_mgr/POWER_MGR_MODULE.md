@@ -62,13 +62,13 @@ The **Unified Power Manager** introduces:
    |   - Typical Draw: ~1.5 - 2.5 mA                           |
    +--------------+--------------------------------------------+
                   |
-                  | If Inactivity >= 15 min (900 s)
+                  | If Inactivity >= 15 min (900 s) OR Critical Battery Cutoff (0% / <= 3.3V)
                   v
    +-----------------------------------------------------------+
    |                    POWER_STATE_DEEP_SLEEP                 |
    |   - CPU / SRAM / Radios: Powered OFF                      |
    |   - Wake Source: RTC GPIO 1..6 (EXT1 Wakeup ANY_LOW)      |
-   |   - Column Pins: Held LOW via gpio_deep_sleep_hold_en()   |
+   |   - Column Pins: Held LOW via gpio_hold_en() & hold_en    |
    |   - Row Pins: RTC Pull-up enabled                         |
    |   - Resume: Full cold boot (~150 ms + BLE reconnect)      |
    |   - Typical Draw: < 20 µA                                 |
@@ -82,8 +82,12 @@ The **Unified Power Manager** introduces:
 - **`kb_manager`:**
   - Invokes `power_mgr_activity_notify()` whenever a matrix state change or keypress edge occurs.
   - In its idle wait phase (no active keys, no pending reports, no tap-hold trackers), evaluates `power_mgr_can_enter_light_sleep()`. If qualified, delegates sleep entry to `power_mgr_enter_light_sleep()`.
+  - Discriminates wakeup causes via `esp_sleep_get_wakeup_cause()`: GPIO wakes restore ACTIVE state with 240 MHz lock, while timer/radio wakes keep IDLE state without resetting inactivity counters.
+- **`battery_module`:**
+  - Emits `BATTERY_EVENT_LEVEL_CHANGED` on discharge and updates.
+  - `power_mgr` registers a dedicated event listener and checks `power_mgr_can_enter_deep_sleep()`, triggering immediate Deep Sleep cell cutoff upon reaching 0% (when not charging over USB).
 - **`usbmod`:**
-  - On `TINYUSB_EVENT_ATTACHED`, notifies `power_mgr_set_usb_active(true)` to keep the OTG PHY operational.
+  - On `TINYUSB_EVENT_ATTACHED`, notifies `power_mgr_set_usb_active(true)` to keep the OTG PHY operational and inhibit sleep.
   - On `TINYUSB_EVENT_DETACHED`, notifies `power_mgr_set_usb_active(false)` to permit wireless sleep transitions.
 - **`split_task` & `split_bridge`:**
   - Replaces legacy hardcoded `pm_apply_active()` with `power_mgr_activity_notify()`, seamlessly ensuring full CPU frequency during split role negotiation or slave matrix packet forwarding.
