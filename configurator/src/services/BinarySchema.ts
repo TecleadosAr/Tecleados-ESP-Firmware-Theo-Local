@@ -1,6 +1,6 @@
 import type { DeviceIdentity } from './DeviceController';
 import type { Macro, MacroElement } from '../types/macros';
-import type { CustomKey } from '../types/customKeys';
+import type { CustomKey, CustomKeyFlavor } from '../types/customKeys';
 import type { Combo } from '../types/combos';
 import type { LayerData } from '../types/device';
 
@@ -178,9 +178,14 @@ export class BinarySchema {
     // ── CUSTOM KEYS ────────────────────────────────────────────────────────
 
     public static parseCustomKey(dv: DataView): CustomKey {
-        const id = dv.getUint16(36, true);
-        const mode = dv.getUint8(38);
-        const name = decodeCString(dv, 40, 32);
+        const isLegacy72 = dv.byteLength < 76;
+        const idOffset = isLegacy72 ? 36 : 40;
+        const modeOffset = isLegacy72 ? 38 : 42;
+        const nameOffset = isLegacy72 ? 40 : 44;
+
+        const id = dv.getUint16(idOffset, true);
+        const mode = isLegacy72 ? dv.getUint8(modeOffset) : dv.getUint16(modeOffset, true);
+        const name = decodeCString(dv, nameOffset, 32);
         const ck: CustomKey = { id, mode, name };
 
         if (mode === 0) {
@@ -203,15 +208,27 @@ export class BinarySchema {
                 doubleTapDuration: dv.getUint32(24, true),
                 holdDuration: dv.getUint32(28, true),
                 holdSustain: dv.getUint8(32) === 1,
+                flavor: (isLegacy72 ? 0 : dv.getUint8(33)) as CustomKeyFlavor,
+                quickTapMs: isLegacy72 ? 0 : dv.getUint16(34, true),
+                requirePriorIdleMs: isLegacy72 ? 0 : dv.getUint16(36, true),
             };
         }
         return ck;
     }
 
     public static serializeCustomKey(ck: CustomKey, dv: DataView): void {
-        dv.setUint16(36, ck.id, true);
-        dv.setUint8(38, ck.mode);
-        encodeCString(ck.name, dv, 40, 32);
+        const isLegacy72 = dv.byteLength < 76;
+        const idOffset = isLegacy72 ? 36 : 40;
+        const modeOffset = isLegacy72 ? 38 : 42;
+        const nameOffset = isLegacy72 ? 40 : 44;
+
+        dv.setUint16(idOffset, ck.id, true);
+        if (isLegacy72) {
+            dv.setUint8(modeOffset, ck.mode);
+        } else {
+            dv.setUint16(modeOffset, ck.mode, true);
+        }
+        encodeCString(ck.name, dv, nameOffset, 32);
         if (ck.mode === 0 && ck.pr) {
             dv.setUint32(0, ck.pr.pressAction ?? 0, true);
             dv.setUint32(4, ck.pr.releaseAction ?? 0, true);
@@ -229,6 +246,11 @@ export class BinarySchema {
             dv.setUint32(24, ck.ma.doubleTapDuration ?? 0, true);
             dv.setUint32(28, ck.ma.holdDuration ?? 0, true);
             dv.setUint8(32, ck.ma.holdSustain ? 1 : 0);
+            if (!isLegacy72) {
+                dv.setUint8(33, ck.ma.flavor ?? 0);
+                dv.setUint16(34, ck.ma.quickTapMs ?? 0, true);
+                dv.setUint16(36, ck.ma.requirePriorIdleMs ?? 0, true);
+            }
         }
     }
 

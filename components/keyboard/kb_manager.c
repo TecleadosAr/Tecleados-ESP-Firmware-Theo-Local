@@ -14,6 +14,7 @@
 #include "kb_macro.h"
 #include "kb_matrix.h"
 #include "kb_debounce.h"
+#include "kb_tap_hold.h"
 #include "kb_report.h"
 #include "kb_state.h"
 #include "kb_system_action.h"
@@ -228,8 +229,8 @@ static void kb_manager_task(void *arg) {
         if (now_us - s_last_scan_us < effective_interval_us) {
             /* If no keys are held and no report is pending delivery, sleep in interrupt
              * mode until a key wakes us. s_matrix_nonempty is updated after every debounce;
-             * use the cached value. */
-            if (!s_matrix_nonempty && !s_report_pending && !s_paused && !s_force_active) {
+             * use the cached value. Do not sleep if tap-hold resolver has pending timers. */
+            if (!s_matrix_nonempty && !s_report_pending && !kb_tap_hold_is_active() && !s_paused && !s_force_active) {
                 bool injected_empty = true;
                 portENTER_CRITICAL(&s_injected_matrix_lock);
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
@@ -389,8 +390,9 @@ static void kb_manager_task(void *arg) {
                     diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
                 }
 
-                // Tick the combo engine (flushes delayed keys)
+                // Tick the combo engine (flushes delayed keys) and tap-hold resolver
                 kb_combo_tick(now_us);
+                kb_tap_hold_tick(now_us);
 
                 for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
                     uint8_t d = diff[byte_idx];
@@ -413,13 +415,13 @@ static void kb_manager_task(void *arg) {
                             }
                             uint16_t action  = kb_layout_get_action_code(r, c, layer_mask);
                             s_active_action_codes[r][c] = action;
-                            kb_macro_process_action(action, true);
+                            kb_tap_hold_process_key(action, true, now_us);
                         } else {
                             /* Key up: fire release on the same action code as the press */
                             uint16_t layer_mask = kb_macro_get_layer_mask();
                             kb_combo_process_key(r, c, false, layer_mask);
                             uint16_t action = s_active_action_codes[r][c];
-                            kb_macro_process_action(action, false);
+                            kb_tap_hold_process_key(action, false, now_us);
                             s_active_action_codes[r][c] = ACTION_CODE_NONE;
                         }
 
@@ -473,6 +475,10 @@ static void kb_manager_task(void *arg) {
     }
 }
 
+static void tap_hold_send_report_cb(void) {
+    kb_macro_send_report_nowait();
+}
+
 /* ---- Public API ---- */
 
 void kb_manager_start(void) {
@@ -481,6 +487,8 @@ void kb_manager_start(void) {
     kb_macro_init();
     kb_system_action_init();
     kb_custom_key_init();
+    kb_tap_hold_init(kb_macro_process_action, kb_macro_fire_tap,
+                     tap_hold_send_report_cb, kb_custom_key_is_tap_hold);
     kb_combo_init();
     cfg_layout_load_all();
 

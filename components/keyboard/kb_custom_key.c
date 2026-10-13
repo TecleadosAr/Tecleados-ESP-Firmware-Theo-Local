@@ -225,3 +225,23 @@ void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
         break;
     }
 }
+
+const cfg_custom_key_t *kb_custom_key_get(uint16_t id) {
+    return find_ckey(id);
+}
+
+bool kb_custom_key_is_tap_hold(uint16_t action_code, cfg_ckey_ma_t *out_ma) {
+    if (action_code < ACTION_CODE_CKEY_MIN || action_code > ACTION_CODE_CKEY_MAX) {
+        return false;
+    }
+    uint16_t id = action_code - ACTION_CODE_CKEY_MIN;
+    const cfg_custom_key_t *ck = find_ckey(id);
+    if (ck && ck->mode == CKEY_MODE_MULTI_ACTION) {
+        if (out_ma) {
+            *out_ma = ck->rules.ma;
+        }
+        return true;
+    }
+    return false;
+}
+

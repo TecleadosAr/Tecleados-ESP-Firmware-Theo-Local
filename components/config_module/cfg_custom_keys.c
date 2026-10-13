@@ -14,6 +14,9 @@ static const char *TAG = "cfg_ckeys";
 void ckeys_default(void *out_struct) {
     cfg_custom_key_t *ck = (cfg_custom_key_t *)out_struct;
     memset(ck, 0, sizeof(cfg_custom_key_t));
+    ck->rules.ma.hold_threshold_ms = 200;
+    ck->rules.ma.double_tap_threshold_ms = 300;
+    ck->rules.ma.flavor = CKEY_FLAVOR_TIMER;
 }
 
 
@@ -67,6 +70,20 @@ esp_err_t ckeys_load_all(cfg_custom_key_t *out_arr, size_t *out_count) {
         esp_err_t err = cfgmod_read_storage(CFGMOD_KIND_CKEY, nvs_key, &out_arr[*out_count], &len);
         if (err == ESP_OK && len == sizeof(cfg_custom_key_t)) {
             ESP_LOGI(TAG, "  loaded ckey_%u ('%s')", i, out_arr[*out_count].name);
+            (*out_count)++;
+        } else if (err == ESP_OK && len == 72) {
+            uint8_t raw[72];
+            memcpy(raw, &out_arr[*out_count], 72);
+            cfg_custom_key_t *dest = &out_arr[*out_count];
+            memset(dest, 0, sizeof(cfg_custom_key_t));
+            memcpy(&dest->rules, raw, 36);
+            dest->rules.ma.flavor = CKEY_FLAVOR_TIMER;
+            dest->rules.ma.quick_tap_ms = 0;
+            dest->rules.ma.require_prior_idle_ms = 0;
+            dest->id = (uint16_t)(raw[36] | (raw[37] << 8));
+            dest->mode = raw[38];
+            memcpy(dest->name, &raw[40], 32);
+            ESP_LOGI(TAG, "  migrated legacy ckey_%u ('%s')", i, dest->name);
             (*out_count)++;
         } else {
             ESP_LOGW(TAG, "  failed to load ckey_%u or size mismatch (err=0x%X, len=%u)", i, (unsigned)err, (unsigned)len);

@@ -11,6 +11,15 @@ export interface CustomKeyPR {
     pressSustain: boolean;
 }
 
+export const CustomKeyFlavor = {
+    Timer: 0,
+    HoldOnOtherKeyPress: 1,
+    PermissiveHold: 2,
+    TapPreferred: 3,
+} as const;
+
+export type CustomKeyFlavor = typeof CustomKeyFlavor[keyof typeof CustomKeyFlavor];
+
 export interface CustomKeyMA {
     tapAction: number;
     doubleTapAction: number;
@@ -21,6 +30,9 @@ export interface CustomKeyMA {
     doubleTapDuration: number;
     holdDuration: number;
     holdSustain: boolean;
+    flavor?: CustomKeyFlavor;
+    quickTapMs?: number;
+    requirePriorIdleMs?: number;
 }
 
 export interface CustomKey {

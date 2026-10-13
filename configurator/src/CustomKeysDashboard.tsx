@@ -43,11 +43,14 @@ function makeDefaultMA(): CustomKeyMA {
         doubleTapAction:    0,
         holdAction:         0,
         doubleTapThreshold: 300,
-        holdThreshold:      500,
+        holdThreshold:      200,
         tapDuration:        20,
         doubleTapDuration:  20,
         holdDuration:       20,
         holdSustain:        false,
+        flavor:             0,
+        quickTapMs:         0,
+        requirePriorIdleMs: 0,
     };
 }
 
@@ -422,22 +425,52 @@ function CKeyEditorModal({ ckey, macros, isSaving, error, onSave, onDelete, onCl
                                 </div>
                             </div>
 
-                            <h4 className="ckey-section-title" style={{ marginTop: '1.25rem' }}>Thresholds</h4>
+                            <h4 className="ckey-section-title" style={{ marginTop: '1.25rem' }}>Thresholds & Tap-Hold Resolver</h4>
                             <div className="ckey-threshold-grid">
                                 <div className="ckey-duration-row">
-                                    <label>Double Tap Window (ms)</label>
-                                    <input
-                                        type="number"
-                                        value={local.ma?.doubleTapThreshold || 300}
-                                        onChange={e => handleMA('doubleTapThreshold', parseInt(e.target.value) || 0)}
-                                    />
+                                    <label>Tap-Hold Flavor</label>
+                                    <select
+                                        value={local.ma?.flavor ?? 0}
+                                        onChange={e => handleMA('flavor', parseInt(e.target.value) || 0)}
+                                    >
+                                        <option value={0}>Hold on Timeout (Timer)</option>
+                                        <option value={1}>Hold on Other Key Press</option>
+                                        <option value={2}>Permissive Hold</option>
+                                        <option value={3}>Tap Preferred</option>
+                                    </select>
                                 </div>
                                 <div className="ckey-duration-row">
                                     <label>Hold Threshold (ms)</label>
                                     <input
                                         type="number"
-                                        value={local.ma?.holdThreshold || 500}
+                                        value={local.ma?.holdThreshold ?? 200}
                                         onChange={e => handleMA('holdThreshold', parseInt(e.target.value) || 0)}
+                                    />
+                                </div>
+                                <div className="ckey-duration-row">
+                                    <label>Double Tap Window (ms)</label>
+                                    <input
+                                        type="number"
+                                        value={local.ma?.doubleTapThreshold ?? 300}
+                                        onChange={e => handleMA('doubleTapThreshold', parseInt(e.target.value) || 0)}
+                                    />
+                                </div>
+                                <div className="ckey-duration-row">
+                                    <label>Quick Tap Window (ms)</label>
+                                    <input
+                                        type="number"
+                                        value={local.ma?.quickTapMs ?? 0}
+                                        onChange={e => handleMA('quickTapMs', parseInt(e.target.value) || 0)}
+                                        placeholder="0 = disabled"
+                                    />
+                                </div>
+                                <div className="ckey-duration-row">
+                                    <label>Prior Idle Window (ms)</label>
+                                    <input
+                                        type="number"
+                                        value={local.ma?.requirePriorIdleMs ?? 0}
+                                        onChange={e => handleMA('requirePriorIdleMs', parseInt(e.target.value) || 0)}
+                                        placeholder="0 = disabled"
                                     />
                                 </div>
                             </div>

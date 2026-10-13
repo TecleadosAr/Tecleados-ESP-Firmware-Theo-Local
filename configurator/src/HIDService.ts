@@ -81,7 +81,9 @@ export type {
     StatusUpdateCallback,
 } from './types/device';
 
-// Re-export custom key types
+export {
+    CustomKeyFlavor,
+} from './types/customKeys';
 export type {
     CustomKey,
     CustomKeyPR,

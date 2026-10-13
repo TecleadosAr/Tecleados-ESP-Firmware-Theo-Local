@@ -41,6 +41,16 @@ typedef struct {
 } cfg_ckey_pr_t;
 
 /**
+ * @brief Tap-Hold flavor defining how hold resolution is determined.
+ */
+typedef enum {
+    CKEY_FLAVOR_TIMER                   = 0,
+    CKEY_FLAVOR_HOLD_ON_OTHER_KEY_PRESS = 1,
+    CKEY_FLAVOR_PERMISSIVE_HOLD         = 2,
+    CKEY_FLAVOR_TAP_PREFERRED           = 3
+} cfg_ckey_flavor_t;
+
+/**
  * @brief MultiAction mode rule set.
  *
  * Tap, double-tap and hold actions are determined by timing thresholds.
@@ -59,7 +69,10 @@ typedef struct {
     uint32_t double_tap_release_delay_ms;
     uint32_t hold_release_delay_ms;
     uint8_t  hold_sustain;
-    uint8_t  reserved[3];
+    uint8_t  flavor;               // cfg_ckey_flavor_t
+    uint16_t quick_tap_ms;
+    uint16_t require_prior_idle_ms;
+    uint8_t  reserved[2];
 } cfg_ckey_ma_t;
 
 /**
@@ -77,9 +90,9 @@ typedef struct {
 } cfg_custom_key_t;
 
 _Static_assert(sizeof(cfg_ckey_pr_t) == 20, "cfg_ckey_pr_t size mismatch");
-_Static_assert(sizeof(cfg_ckey_ma_t) == 36, "cfg_ckey_ma_t size mismatch");
-_Static_assert(sizeof(cfg_custom_key_t) == 72, "cfg_custom_key_t size mismatch");
-_Static_assert(offsetof(cfg_custom_key_t, name) == 40, "offset mismatch");
+_Static_assert(sizeof(cfg_ckey_ma_t) == 40, "cfg_ckey_ma_t size mismatch");
+_Static_assert(sizeof(cfg_custom_key_t) == 76, "cfg_custom_key_t size mismatch");
+_Static_assert(offsetof(cfg_custom_key_t, name) == 44, "offset mismatch");
 
 /**
  * @brief Lightweight index stored in NVS to track which Custom Key IDs exist.

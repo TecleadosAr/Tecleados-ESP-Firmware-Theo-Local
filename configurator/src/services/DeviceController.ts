@@ -550,7 +550,7 @@ export class DeviceController {
 
     public async saveCustomKey(ckey: CustomKey): Promise<boolean> {
         if (!this.isConnected()) return false;
-        const data = new Uint8Array(72);
+        const data = new Uint8Array(76);
         const dv = new DataView(data.buffer);
         BinarySchema.serializeCustomKey(ckey, dv);
         const buf = this.buildConfigPayload(CFG_CMD_SET, CFG_KEY_CKEY_SINGLE, ckey.id, data);

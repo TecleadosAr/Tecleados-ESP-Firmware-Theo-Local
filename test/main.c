@@ -23,6 +23,8 @@
  * (event_bus.h, kb_layout.h, kb_system_action.h, kb_matrix.h) via shims. */
 #include "test_harness.h"
 #include "mocks/mock_comm.h"
+#include "cfgmod.h"
+#include "cfg_custom_keys.h"
 
 /* ======================================================================
  * Production code — linked via single-TU #include.
@@ -54,9 +56,14 @@
 __attribute__((weak)) void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
     (void)action_code; (void)is_pressed;
 }
+__attribute__((weak)) bool kb_custom_key_is_tap_hold(uint16_t action_code, cfg_ckey_ma_t *out_ma) {
+    (void)action_code; (void)out_ma;
+    return false;
+}
 __attribute__((weak)) void comm_timeout_reschedule(void) {
 }
 #include "../../components/keyboard/kb_macro.c"
+#include "../../components/keyboard/kb_tap_hold.c"
 #include "../../components/keyboard/kb_debounce.c"
 #include "../../components/keyboard/kb_matrix_hal.c"
 #include "../../components/keyboard/kb_matrix.c"
@@ -85,6 +92,7 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "keyboard/test_kb_layout.c"
 #include "keyboard/test_kb_matrix.c"
 #include "keyboard/test_kb_debounce.c"
+#include "keyboard/test_kb_tap_hold.c"
 #include "keyboard/test_kb_system_action.c"
 
 /* USB / Comm tests */

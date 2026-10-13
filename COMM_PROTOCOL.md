@@ -295,7 +295,7 @@ All structures use explicit Little-Endian encoding for multi-byte values (`uint1
 | `17` | `1` | `uint8_t` | `press_sustain` |
 | `18` | `2` | `uint8_t[2]` | `reserved` |
 
-### Custom Key: Multi Action Rules (`cfg_ckey_ma_t` - 36 bytes)
+### Custom Key: Multi Action Rules (`cfg_ckey_ma_t` - 40 bytes)
 | Offset | Size | Type | Name |
 | --- | --- | --- | --- |
 | `0` | `4` | `uint32_t` | `tap_action` |
@@ -307,16 +307,18 @@ All structures use explicit Little-Endian encoding for multi-byte values (`uint1
 | `24` | `4` | `uint32_t` | `double_tap_release_delay_ms` |
 | `28` | `4` | `uint32_t` | `hold_release_delay_ms` |
 | `32` | `1` | `uint8_t` | `hold_sustain` |
-| `33` | `3` | `uint8_t[3]` | `reserved` |
+| `33` | `1` | `uint8_t` | `flavor` (0: Timer, 1: HoldOnOtherKeyPress, 2: PermissiveHold, 3: TapPreferred) |
+| `34` | `2` | `uint16_t` | `quick_tap_ms` |
+| `36` | `2` | `uint16_t` | `require_prior_idle_ms` |
+| `38` | `2` | `uint8_t[2]` | `reserved[2]` |
 
-### Custom Key Config (`cfg_custom_key_t` - 72 bytes)
+### Custom Key Config (`cfg_custom_key_t` - 76 bytes)
 | Offset | Size | Type | Name |
 | --- | --- | --- | --- |
-| `0` | `36` | `union` | `rules` (Either `pr` or `ma` depending on `mode`. Always sized as 36 bytes max) |
-| `36` | `2` | `uint16_t` | `id` |
-| `38` | `1` | `uint8_t` | `mode` |
-| `39` | `1` | `uint8_t` | `reserved[1]` |
-| `40` | `32` | `char[32]` | `name` |
+| `0` | `40` | `union` | `rules` (Either `pr` or `ma` depending on `mode`. Always sized as 40 bytes max) |
+| `40` | `2` | `uint16_t` | `id` |
+| `42` | `2` | `uint16_t` | `mode` |
+| `44` | `32` | `char[32]` | `name` |
 
 ### Combo Config (`cfg_combo_t` - 64 bytes)
 | Offset | Size | Type | Name |
