@@ -205,6 +205,31 @@ flowchart TD
 
 ### FASE 2: Latencia Competitiva + Tap-Hold Avanzado
 
+#### Checklist de Ejecución de Fase 2:
+- [x] **2.1. Tiempo de asentamiento parametrizable y medido**
+  - [x] Kconfig `CONFIG_TEF_MATRIX_SETTLE_US` (default 20 µs) en `components/keyboard/Kconfig`.
+  - [x] Aplicación de `CONFIG_TEF_MATRIX_SETTLE_US` en `components/keyboard/kb_matrix.c`.
+  - [x] Mantener compatibilidad host test mediante mock/default fallback.
+- [x] **2.2. Eager Debounce (activación inmediata en el primer scan)**
+  - [x] Kconfig `CONFIG_TEF_EAGER_DEBOUNCE`, `CONFIG_TEF_PRESS_CONFIRM_SCANS` (default 1) y `CONFIG_TEF_RELEASE_DEBOUNCE_SCANS` (default 5).
+  - [x] Implementación en `components/keyboard/kb_debounce.c` y `components/keyboard/include/kb_debounce.h`.
+  - [x] Integración de `kb_debounce_update` y `kb_debounce_init` en `components/keyboard/kb_manager.c`.
+  - [x] Tests unitarios dedicados en `test/keyboard/test_kb_debounce.c` cubriendo press inmediato, 5 scans de release consecutivo, rebotes durante release y reseteo.
+- [x] **2.3. Lectura directa del banco de GPIO con HAL optimizado**
+  - [x] Implementación de `components/keyboard/include/kb_matrix_hal.h` y `components/keyboard/kb_matrix_hal.c`.
+  - [x] Lectura directa de registros de entrada en ESP-IDF (`REG_READ(GPIO_IN_REG)` decodificando `(~in >> 1) & 0x3F`) para GPIO1-6.
+  - [x] Escritura directa por registros a bancos bajo (`W1TC/W1TS` GPIO0-31) y alto (`W1TC/W1TS` GPIO32-48) para selección rápida de columnas.
+  - [x] Integración en `kb_matrix.c` y tests unitarios en `test/keyboard/test_kb_matrix.c`.
+- [x] **2.4. Resolvedor Tap-Hold con flavors, búfer diferido y sincronización cross-stack**
+  - [x] Búfer de eventos diferidos (16 entradas) y máquina de estados interrupt-aware en `components/keyboard/kb_tap_hold.c`.
+  - [x] Soporte para los 4 flavors: `TIMER` (0), `HOLD_ON_OTHER_KEY_PRESS` (1), `PERMISSIVE_HOLD` (2), `TAP_PREFERRED` (3).
+  - [x] Soporte para `quick_tap_ms` (repetición inmediata/auto-repeat sin retardo) y `require_prior_idle_ms` (prevención de falsos holds en tipeo veloz).
+  - [x] Integración en el scan loop de `components/keyboard/kb_manager.c` con guardas para light sleep (`kb_tap_hold_is_active()`).
+  - [x] Actualización de `cfg_ckey_ma_t` (40 bytes) y `cfg_custom_key_t` (76 bytes) en `components/config_module/` con migración retrocompatible de NVS (72 bytes).
+  - [x] Actualización del esquema binario y UI del configurador (`customKeys.ts`, `BinarySchema.ts`, `DeviceController.ts`, `CustomKeysDashboard.tsx`).
+  - [x] Documentación actualizada en `COMM_PROTOCOL.md`.
+  - [x] Tests unitarios deterministas completos en `test/keyboard/test_kb_tap_hold.c` (11 tests cubriendo todos los modos y secuencias complejas).
+
 > **Ojo con la expectativa:** el objetivo realista es la **latencia interna** (matriz → bytes de reporte entregados al stack USB/BLE). La latencia extremo a extremo la domina el transporte (USB: ≤1 ms de polling; BLE: intervalo de conexión 7.5–15 ms).
 
 #### 2.1. Tiempo de asentamiento parametrizable y medido (**mayor ganancia, va primero**)
