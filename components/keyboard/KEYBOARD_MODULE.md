@@ -1,7 +1,7 @@
 # Keyboard Module (`kb_module`)
 
-> **Source:** `components/keyboard/` — `kb_manager.c`, `kb_matrix.c`, `kb_layout.c`, `kb_macro.c`, `kb_system_action.c`, `kb_report.c`, `kb_custom_key.c`, `kb_state.c`, `kb_combo.c`
-> **Public API:** `include/kb_manager.h`, `include/kb_layout.h`, `include/kb_matrix.h`, `include/kb_report.h`, `include/kb_combo.h`
+> **Source:** `components/keyboard/` — `kb_manager.c`, `kb_matrix.c`, `kb_matrix_hal.c`, `kb_debounce.c`, `kb_tap_hold.c`, `kb_layout.c`, `kb_macro.c`, `kb_system_action.c`, `kb_report.c`, `kb_custom_key.c`, `kb_state.c`, `kb_combo.c`  
+> **Public API:** `include/kb_manager.h`, `include/kb_matrix.h`, `include/kb_matrix_hal.h`, `include/kb_debounce.h`, `include/kb_tap_hold.h`, `include/kb_layout.h`, `include/kb_report.h`, `include/kb_combo.h`
 
 The Keyboard module is the **central nervous system** of the firmware. It is responsible for the entire lifecycle of a keypress: from high-frequency hardware scanning and debouncing to the complex logic of layers, macros, and multi-transport HID reporting.
 
@@ -45,6 +45,19 @@ To prevent I/O blocking from slowing down the logic engine, the keyboard uses a 
 4.  This decoupling ensures that logical key presses never wait for slow radio or USB acknowledge cycles.
 5.  **Non-blocking delivery & retry**: Scans use `kb_macro_send_report_nowait()` without busy retries. Transport delivery failures are handled via `s_report_pending` with exponential backoff (1ms..16ms), preventing matrix scan blocking and guaranteeing zero stuck keys.
 6.  **Atomic Layer Masks**: Layer states (`s_momentary_layers` and `s_toggled_layers`) use C11 `_Atomic uint32_t` (native Xtensa CAS `S32C1I`), ensuring thread-safe, lock-free access across tasks and cores. Layer purges are decoupled into event bus callbacks.
+
+### 4. Direct GPIO Register Scanning & Settling Time (`kb_matrix_hal.c`)
+- **Direct Register Access**: Instead of iterating per-pin `gpio_set_level` and `gpio_get_level`, matrix scanning utilizes `REG_WRITE(GPIO_OUT_W1TC/S_REG)` for bank-0 (GPIO 7–18, 21) and `GPIO_OUT1_W1TC/S_REG` for bank-1 (GPIO 38–42). Row reads decode physical inputs directly via `(~REG_READ(GPIO_IN_REG) >> 1) & 0x3F` for GPIO 1–6 in a single CPU cycle.
+- **Configurable Settling Time**: Configured via `CONFIG_TEF_MATRIX_SETTLE_US` (default 20 µs) to ensure safe discharge across stray capacitive trace loads before sampling.
+
+### 5. Eager Debounce Engine (`kb_debounce.c`)
+- **Lowest Latency Confirmation**: Keypresses are confirmed eagerly on the first scan (`CONFIG_TEF_PRESS_CONFIRM_SCANS = 1`), reducing input latency from ~4–5 ms to < 1.2 ms p99.
+- **Symmetric Integrator Release**: Key releases require `CONFIG_TEF_RELEASE_DEBOUNCE_SCANS` (default 5) consecutive low scans, filtering switch contact bounce on release.
+
+### 6. Interrupt-Aware Tap-Hold Resolver (`kb_tap_hold.c`)
+- **Flavors**: Supports `TIMER` (0), `HOLD_ON_OTHER_KEY_PRESS` (1), `PERMISSIVE_HOLD` (2), and `TAP_PREFERRED` (3).
+- **Deferred Event Buffer**: A 16-entry FIFO buffer intercepts and preserves keystrokes typed while a tap-hold key is undecided, guaranteeing strict event order upon resolution.
+- **Anti-Misfire Protections**: Includes `quick_tap_ms` for auto-repeat recognition and `require_prior_idle_ms` to prevent accidental hold activation during fast typing bursts.
 
 ---
 

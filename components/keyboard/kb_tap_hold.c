@@ -63,6 +63,7 @@ static void fire_tap(uint16_t action, uint32_t dur_ms) {
         s_fire_tap_fn(action, dur_ms > 0 ? dur_ms : 20, 0);
     } else if (s_dispatch_fn) {
         s_dispatch_fn(action, true);
+        if (s_send_report_fn) s_send_report_fn();
         s_dispatch_fn(action, false);
     }
 }
@@ -194,11 +195,7 @@ void kb_tap_hold_process_key(uint16_t action_code, bool is_pressed, int64_t now_
     if (s_state == TH_STATE_PENDING_DECISION) {
         /* Release of the pending tap-hold key itself */
         if (!is_pressed && action_code == s_pending_action) {
-            if (s_pending_ma.flavor == CKEY_FLAVOR_PERMISSIVE_HOLD && s_nested_key_completed && !s_disallow_hold) {
-                resolve_to_hold();
-            } else {
-                resolve_to_tap(now_us);
-            }
+            resolve_to_tap(now_us);
             return;
         }
 
@@ -217,6 +214,7 @@ void kb_tap_hold_process_key(uint16_t action_code, bool is_pressed, int64_t now_
                 /* Buffer full: force resolution to avoid losing events */
                 resolve_to_hold();
                 if (s_dispatch_fn) s_dispatch_fn(action_code, true);
+                if (s_send_report_fn) s_send_report_fn();
             }
             return;
         } else {
@@ -235,12 +233,18 @@ void kb_tap_hold_process_key(uint16_t action_code, bool is_pressed, int64_t now_
             if (!buffer_push(action_code, false, now_us)) {
                 resolve_to_hold();
                 if (s_dispatch_fn) s_dispatch_fn(action_code, false);
+                if (s_send_report_fn) s_send_report_fn();
             }
             return;
         }
     }
 
     /* ─── CASE: In TH_STATE_IDLE ─── */
+    if (!is_pressed && is_th) {
+        /* Physical release of a tap-hold key that already resolved (e.g. timeout fallback or quick-tap) */
+        return;
+    }
+
     if (is_pressed && is_th) {
         /* Check quick-tap repeat (auto-repeat) */
         if (action_code == s_last_tap_key && ma.quick_tap_ms > 0 && s_last_tap_release_us > 0) {

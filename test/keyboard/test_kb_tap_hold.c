@@ -71,7 +71,7 @@ TEST_SETUP(kb_tap_hold) {
     s_current_ma_cfg.quick_tap_ms            = 0;
     s_current_ma_cfg.require_prior_idle_ms   = 0;
 
-    kb_tap_hold_init(mock_dispatch, mock_fire_tap, mock_send_report, mock_lookup);
+    kb_tap_hold_init(mock_dispatch, NULL, mock_send_report, mock_lookup);
 }
 
 TEST_CASE(kb_tap_hold, regular_key_dispatched_immediately_without_delay) {
@@ -343,5 +343,104 @@ TEST_CASE(kb_tap_hold, double_tap_timeout_falls_back_to_single_tap) {
     TEST_ASSERT_TRUE(s_rec[0].is_pressed);
     TEST_ASSERT_EQUAL(ACT_TAP, s_rec[1].action_code);
     TEST_ASSERT_FALSE(s_rec[1].is_pressed);
+    TEST_ASSERT_EQUAL(TH_STATE_IDLE, kb_tap_hold_get_state());
+}
+
+TEST_CASE(kb_tap_hold, flavor_tap_preferred_nested_key_resolves_tap) {
+    s_current_ma_cfg.flavor = CKEY_FLAVOR_TAP_PREFERRED;
+
+    /* Press TH key at t = 0 */
+    kb_tap_hold_process_key(MOCK_TH_KEY, true, 0);
+
+    /* Regular key pressed and released within the TH window (nested) */
+    kb_tap_hold_process_key(MOCK_REGULAR_KEY, true, 20000);
+    kb_tap_hold_process_key(MOCK_REGULAR_KEY, false, 40000);
+
+    /* Unlike PERMISSIVE_HOLD, TAP_PREFERRED buffers both and does NOT trigger hold */
+    TEST_ASSERT_EQUAL(0, s_rec_count);
+    TEST_ASSERT_EQUAL(2, kb_tap_hold_get_buffered_count());
+
+    /* TH key released at 60 ms (< 200 ms tapping term) */
+    kb_tap_hold_process_key(MOCK_TH_KEY, false, 60000);
+
+    /* Resolves to TAP ('a') press & release, then flushes nested key press & release! */
+    TEST_ASSERT_EQUAL(4, s_rec_count);
+    TEST_ASSERT_EQUAL(ACT_TAP, s_rec[0].action_code);
+    TEST_ASSERT_TRUE(s_rec[0].is_pressed);
+    TEST_ASSERT_EQUAL(ACT_TAP, s_rec[1].action_code);
+    TEST_ASSERT_FALSE(s_rec[1].is_pressed);
+    TEST_ASSERT_EQUAL(MOCK_REGULAR_KEY, s_rec[2].action_code);
+    TEST_ASSERT_TRUE(s_rec[2].is_pressed);
+    TEST_ASSERT_EQUAL(MOCK_REGULAR_KEY, s_rec[3].action_code);
+    TEST_ASSERT_FALSE(s_rec[3].is_pressed);
+    TEST_ASSERT_EQUAL(TH_STATE_IDLE, kb_tap_hold_get_state());
+}
+
+TEST_CASE(kb_tap_hold, flavor_tap_preferred_hold_by_timer_expiration) {
+    s_current_ma_cfg.flavor = CKEY_FLAVOR_TAP_PREFERRED;
+
+    /* Press TH key at t = 0 */
+    kb_tap_hold_process_key(MOCK_TH_KEY, true, 0);
+
+    /* Regular key pressed at 30 ms */
+    kb_tap_hold_process_key(MOCK_REGULAR_KEY, true, 30000);
+    TEST_ASSERT_EQUAL(0, s_rec_count);
+
+    /* Hold timeout expires at 200 ms -> resolves to HOLD */
+    kb_tap_hold_tick(200000);
+    TEST_ASSERT_EQUAL(2, s_rec_count);
+    TEST_ASSERT_EQUAL(ACT_HOLD, s_rec[0].action_code);
+    TEST_ASSERT_TRUE(s_rec[0].is_pressed);
+    TEST_ASSERT_EQUAL(MOCK_REGULAR_KEY, s_rec[1].action_code);
+    TEST_ASSERT_TRUE(s_rec[1].is_pressed);
+    TEST_ASSERT_EQUAL(TH_STATE_HOLD_SUSTAINED, kb_tap_hold_get_state());
+
+    /* TH key released at 300 ms */
+    kb_tap_hold_process_key(MOCK_TH_KEY, false, 300000);
+    TEST_ASSERT_EQUAL(3, s_rec_count);
+    TEST_ASSERT_EQUAL(ACT_HOLD, s_rec[2].action_code);
+    TEST_ASSERT_FALSE(s_rec[2].is_pressed);
+}
+
+TEST_CASE(kb_tap_hold, buffer_overflow_forces_hold_and_reports_all_events) {
+    s_current_ma_cfg.flavor = CKEY_FLAVOR_TIMER;
+
+    /* Press TH key at t = 0 */
+    kb_tap_hold_process_key(MOCK_TH_KEY, true, 0);
+    TEST_ASSERT_EQUAL(0, s_rec_count);
+
+    /* Buffer 16 keys (maximum buffer capacity) */
+    for (uint16_t k = 0; k < TH_MAX_DEFERRED_EVENTS; k++) {
+        kb_tap_hold_process_key(0x0010 + k, true, 1000 + k * 100);
+    }
+    TEST_ASSERT_EQUAL(0, s_rec_count);
+    TEST_ASSERT_EQUAL(16, kb_tap_hold_get_buffered_count());
+
+    /* 17th event overflows buffer -> forces immediate resolution to HOLD */
+    kb_tap_hold_process_key(0x0030, true, 5000);
+
+    /* Must have dispatched HOLD + 16 buffered keys + 17th overflowing key = 18 events */
+    TEST_ASSERT_EQUAL(18, s_rec_count);
+    TEST_ASSERT_EQUAL(ACT_HOLD, s_rec[0].action_code);
+    TEST_ASSERT_TRUE(s_rec[0].is_pressed);
+    for (uint16_t k = 0; k < 16; k++) {
+        TEST_ASSERT_EQUAL(0x0010 + k, s_rec[1 + k].action_code);
+        TEST_ASSERT_TRUE(s_rec[1 + k].is_pressed);
+    }
+    TEST_ASSERT_EQUAL(0x0030, s_rec[17].action_code);
+    TEST_ASSERT_TRUE(s_rec[17].is_pressed);
+    TEST_ASSERT_EQUAL(TH_STATE_HOLD_SUSTAINED, kb_tap_hold_get_state());
+    TEST_ASSERT_EQUAL(0, kb_tap_hold_get_buffered_count());
+}
+
+TEST_CASE(kb_tap_hold, released_tap_hold_in_idle_does_not_dispatch_orphaned_release) {
+    /* Key already idle */
+    TEST_ASSERT_EQUAL(TH_STATE_IDLE, kb_tap_hold_get_state());
+
+    /* Physical release of TH key while idle (e.g. after earlier resolution) */
+    kb_tap_hold_process_key(MOCK_TH_KEY, false, 1000);
+
+    /* Must NOT dispatch anything (orphaned release ignored) */
+    TEST_ASSERT_EQUAL(0, s_rec_count);
     TEST_ASSERT_EQUAL(TH_STATE_IDLE, kb_tap_hold_get_state());
 }

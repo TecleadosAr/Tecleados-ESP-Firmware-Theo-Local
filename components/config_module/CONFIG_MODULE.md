@@ -23,6 +23,9 @@ This allows the firmware to enumerate active items instantly by reading a single
 ### 3. In-Place Binary Operations
 Configuration operations process binary structures directly. To prevent stack overflows, large structs are never instantiated on the task stack. Instead, the module uses in-place bounds checking and `memcpy()` operations directly against the `comm_module`'s global, session-locked receive buffer.
 
+### 4. Custom Key Schema & Backward Compatibility
+Custom keys use `cfg_custom_key_t` (76 bytes), featuring a 40-byte MultiAction rules payload (`cfg_ckey_ma_t`) with tap-hold flavor selection (`cfg_ckey_flavor_t`), `quick_tap_ms`, and `require_prior_idle_ms`. Legacy 72-byte NVS records are automatically migrated on load (`ckeys_load_all()`) into 76-byte structures, defaulting to timer flavor (`CKEY_FLAVOR_TIMER`) and 200 ms tapping term.
+
 ---
 
 ## NVS Namespace Mapping

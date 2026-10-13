@@ -184,7 +184,7 @@ export class BinarySchema {
         const nameOffset = isLegacy72 ? 40 : 44;
 
         const id = dv.getUint16(idOffset, true);
-        const mode = isLegacy72 ? dv.getUint8(modeOffset) : dv.getUint16(modeOffset, true);
+        const mode = dv.getUint8(modeOffset);
         const name = decodeCString(dv, nameOffset, 32);
         const ck: CustomKey = { id, mode, name };
 
@@ -223,10 +223,9 @@ export class BinarySchema {
         const nameOffset = isLegacy72 ? 40 : 44;
 
         dv.setUint16(idOffset, ck.id, true);
-        if (isLegacy72) {
-            dv.setUint8(modeOffset, ck.mode);
-        } else {
-            dv.setUint16(modeOffset, ck.mode, true);
+        dv.setUint8(modeOffset, ck.mode);
+        if (!isLegacy72) {
+            dv.setUint8(modeOffset + 1, 0);
         }
         encodeCString(ck.name, dv, nameOffset, 32);
         if (ck.mode === 0 && ck.pr) {

@@ -487,7 +487,7 @@ void kb_manager_start(void) {
     kb_macro_init();
     kb_system_action_init();
     kb_custom_key_init();
-    kb_tap_hold_init(kb_macro_process_action, kb_macro_fire_tap,
+    kb_tap_hold_init(kb_macro_process_action, NULL,
                      tap_hold_send_report_cb, kb_custom_key_is_tap_hold);
     kb_combo_init();
     cfg_layout_load_all();

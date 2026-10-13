@@ -95,6 +95,7 @@ void kb_matrix_scan(uint8_t *out_matrix_bitmap, bool mirror_cols) {
 */
 void kb_matrix_gpio_init(void) {
 	ESP_LOGI(TAG, "Initializing GPIO matrix");
+	kb_matrix_hal_init();
 
 	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
 	const size_t col_count = sizeof(k_cols) / sizeof(k_cols[0]);

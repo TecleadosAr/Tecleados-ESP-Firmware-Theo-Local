@@ -317,7 +317,8 @@ All structures use explicit Little-Endian encoding for multi-byte values (`uint1
 | --- | --- | --- | --- |
 | `0` | `40` | `union` | `rules` (Either `pr` or `ma` depending on `mode`. Always sized as 40 bytes max) |
 | `40` | `2` | `uint16_t` | `id` |
-| `42` | `2` | `uint16_t` | `mode` |
+| `42` | `1` | `uint8_t` | `mode` |
+| `43` | `1` | `uint8_t` | `reserved[1]` |
 | `44` | `32` | `char[32]` | `name` |
 
 ### Combo Config (`cfg_combo_t` - 64 bytes)
