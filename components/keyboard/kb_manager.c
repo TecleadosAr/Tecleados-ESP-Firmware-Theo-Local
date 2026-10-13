@@ -32,6 +32,7 @@
 #include "usb_descriptors.h"
 #include "comm_module.h"
 #include "usbmod.h"
+#include "power_mgr.h"
 
 static const char *TAG = "kb_manager";
 
@@ -239,10 +240,16 @@ static void kb_manager_task(void *arg) {
                 portEXIT_CRITICAL(&s_injected_matrix_lock);
 
                 if (injected_empty) {
-                    kb_matrix_set_interrupts_enabled(true);
-                    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-                    kb_matrix_set_interrupts_enabled(false);
-                    now_us = esp_timer_get_time();
+                    power_mgr_update();
+                    if (power_mgr_can_enter_light_sleep()) {
+                        power_mgr_enter_light_sleep();
+                        now_us = esp_timer_get_time();
+                    } else {
+                        kb_matrix_set_interrupts_enabled(true);
+                        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+                        kb_matrix_set_interrupts_enabled(false);
+                        now_us = esp_timer_get_time();
+                    }
                 } else {
                     /* taskYIELD() would spin-starve IDLE (lower priority) and
                      * trigger the task watchdog.  Block for one tick instead. */
@@ -370,6 +377,7 @@ static void kb_manager_task(void *arg) {
                               memcmp(s_matrix, s_last_matrix, KB_MATRIX_BITMAP_BYTES) != 0;
 
         if (matrix_changed) {
+            power_mgr_activity_notify();
             if (s_matrix_cb) {
                 /* Split SLAVE mode: this half only forwards its raw matrix to the
                  * master (via s_matrix_cb / on_matrix_change).  All action

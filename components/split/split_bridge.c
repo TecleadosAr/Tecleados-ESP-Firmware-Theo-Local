@@ -27,25 +27,15 @@
 /* =========================================================================
  * Matrix forwarding — registered as the kb_manager matrix_cb when SLAVE
  * =========================================================================
+#include "power_mgr.h"
+
+/* =========================================================================
+ * Matrix forwarding — registered as the kb_manager matrix_cb when SLAVE
+ * =========================================================================
  * Every slave-side matrix change is serialised into a KEY_STATE_FULL packet.
  * ESP-NOW is fire-and-forget; a dropped delta would corrupt the master's
  * view forever, so we always send the full 14-byte bitmap.
  * ========================================================================= */
-
-#if CONFIG_PM_ENABLE
-#include "esp_pm.h"
-static void pm_apply_active(void)
-{
-    esp_pm_config_t cfg = {
-        .max_freq_mhz       = 240,
-        .min_freq_mhz       = 240,
-        .light_sleep_enable = false,
-    };
-    (void)esp_pm_configure(&cfg);
-}
-#else
-static inline void pm_apply_active(void) {}
-#endif
 
 static void on_matrix_change(const uint8_t *matrix, size_t len, uint16_t layer_mask)
 {
@@ -54,15 +44,11 @@ static void on_matrix_change(const uint8_t *matrix, size_t len, uint16_t layer_m
         return;
     }
 
-#if CONFIG_PM_ENABLE
     bool any_pressed = false;
     for (size_t i = 0; i < (len < SPLIT_MATRIX_BYTES ? len : SPLIT_MATRIX_BYTES); i++) {
         if (matrix[i]) { any_pressed = true; break; }
     }
-    if (any_pressed) pm_apply_active();
-#else
-    (void)len;
-#endif
+    if (any_pressed) power_mgr_activity_notify();
 
     split_sync_send_full_state(split_session_peer_mac(), matrix, 0,
                                split_session_next_seq());

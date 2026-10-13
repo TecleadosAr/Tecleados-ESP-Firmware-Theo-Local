@@ -17,7 +17,7 @@
 #ifdef TAG
 #undef TAG
 #endif
-static const char *TAG = "BATTERY";
+#define TAG "BATTERY"
 
 /* Default configuration fallbacks if not defined by Kconfig */
 #ifndef CONFIG_TEF_BATTERY_ENABLE
@@ -55,18 +55,18 @@ __attribute__((weak)) void ble_hid_notify_battery_all(uint8_t level) {
 }
 
 /* Internal driver state */
-static bool                      s_initialized       = false;
-static adc_oneshot_unit_handle_t s_adc_handle        = NULL;
-static adc_cali_handle_t         s_cali_handle       = NULL;
-static adc_channel_t             s_adc_chan          = ADC_CHANNEL_6;
-static bool                      s_adc_chan_valid    = false;
+static bool                      s_batt_initialized       = false;
+static adc_oneshot_unit_handle_t s_batt_adc_handle        = NULL;
+static adc_cali_handle_t         s_batt_cali_handle       = NULL;
+static adc_channel_t             s_batt_adc_chan          = ADC_CHANNEL_6;
+static bool                      s_batt_adc_chan_valid    = false;
 
-static uint32_t                  s_last_voltage_mv   = 0;
-static uint8_t                   s_filtered_pct      = 0xFF;
-static uint8_t                   s_last_notified_pct = 0xFF;
-static int64_t                   s_last_notify_us    = 0;
-static bool                      s_is_charging       = false;
-static uint32_t                  s_mock_voltage_mv   = 0;
+static uint32_t                  s_batt_last_voltage_mv   = 0;
+static uint8_t                   s_batt_filtered_pct      = 0xFF;
+static uint8_t                   s_batt_last_notified_pct = 0xFF;
+static int64_t                   s_batt_last_notify_us    = 0;
+static bool                      s_batt_is_charging       = false;
+static uint32_t                  s_batt_mock_voltage_mv   = 0;
 
 /* LiPo discharge curve LUT */
 typedef struct {
@@ -112,7 +112,7 @@ uint8_t battery_voltage_to_pct(uint32_t mv) {
 }
 
 void battery_set_mock_voltage_mv(uint32_t mv) {
-    s_mock_voltage_mv = mv;
+    s_batt_mock_voltage_mv = mv;
     if (mv > 0) {
         /* Force immediate update for unit testing */
         battery_poll_and_notify();
@@ -120,20 +120,20 @@ void battery_set_mock_voltage_mv(uint32_t mv) {
 }
 
 void battery_test_reset(void) {
-    s_filtered_pct      = 0xFF;
-    s_last_notified_pct = 0xFF;
-    s_last_voltage_mv   = 0;
-    s_last_notify_us    = 0;
-    s_is_charging       = false;
-    s_mock_voltage_mv   = 0;
+    s_batt_filtered_pct      = 0xFF;
+    s_batt_last_notified_pct = 0xFF;
+    s_batt_last_voltage_mv   = 0;
+    s_batt_last_notify_us    = 0;
+    s_batt_is_charging       = false;
+    s_batt_mock_voltage_mv   = 0;
 }
 
 static uint32_t read_battery_voltage_mv_internal(void) {
-    if (s_mock_voltage_mv > 0) {
-        return s_mock_voltage_mv;
+    if (s_batt_mock_voltage_mv > 0) {
+        return s_batt_mock_voltage_mv;
     }
 
-    if (!s_adc_chan_valid || s_adc_handle == NULL) {
+    if (!s_batt_adc_chan_valid || s_batt_adc_handle == NULL) {
         return 0;
     }
 
@@ -141,7 +141,7 @@ static uint32_t read_battery_voltage_mv_internal(void) {
     int samples[5];
     for (int i = 0; i < 5; i++) {
         int raw = 0;
-        esp_err_t err = adc_oneshot_read(s_adc_handle, s_adc_chan, &raw);
+        esp_err_t err = adc_oneshot_read(s_batt_adc_handle, s_batt_adc_chan, &raw);
         if (err != ESP_OK) {
             raw = 0;
         }
@@ -161,8 +161,8 @@ static uint32_t read_battery_voltage_mv_internal(void) {
     int median_raw = samples[2];
 
     int pin_mv = 0;
-    if (s_cali_handle) {
-        adc_cali_raw_to_voltage(s_cali_handle, median_raw, &pin_mv);
+    if (s_batt_cali_handle) {
+        adc_cali_raw_to_voltage(s_batt_cali_handle, median_raw, &pin_mv);
     } else {
         /* Default approximation if calibration scheme not available */
         pin_mv = (median_raw * 3100) / 4095;
@@ -175,36 +175,36 @@ static uint32_t read_battery_voltage_mv_internal(void) {
 }
 
 esp_err_t battery_init(void) {
-    if (s_initialized) return ESP_OK;
+    if (s_batt_initialized) return ESP_OK;
 
 #if !CONFIG_TEF_BATTERY_ENABLE
     ESP_LOGI(TAG, "Battery monitoring disabled by configuration");
-    s_initialized = true;
+    s_batt_initialized = true;
     return ESP_OK;
 #endif
 
     int adc_gpio = CONFIG_TEF_BATTERY_ADC_GPIO;
     if (adc_gpio < 0) {
         ESP_LOGI(TAG, "Battery ADC pin disabled (GPIO %d)", adc_gpio);
-        s_initialized = true;
+        s_batt_initialized = true;
         return ESP_OK;
     }
 
-    if (!gpio_to_adc1_channel(adc_gpio, &s_adc_chan)) {
+    if (!gpio_to_adc1_channel(adc_gpio, &s_batt_adc_chan)) {
         ESP_LOGW(TAG, "GPIO %d is not a valid ADC1 pin on ESP32-S3", adc_gpio);
-        s_initialized = true;
+        s_batt_initialized = true;
         return ESP_ERR_INVALID_ARG;
     }
-    s_adc_chan_valid = true;
+    s_batt_adc_chan_valid = true;
 
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = ADC_UNIT_1,
         .clk_src = 0,
     };
-    esp_err_t err = adc_oneshot_new_unit(&init_config, &s_adc_handle);
+    esp_err_t err = adc_oneshot_new_unit(&init_config, &s_batt_adc_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize ADC1 unit: %s", esp_err_to_name(err));
-        s_initialized = true;
+        s_batt_initialized = true;
         return err;
     }
 
@@ -212,26 +212,26 @@ esp_err_t battery_init(void) {
         .bitwidth = ADC_BITWIDTH_DEFAULT,
         .atten    = ADC_ATTEN_DB_12,
     };
-    err = adc_oneshot_config_channel(s_adc_handle, s_adc_chan, &config);
+    err = adc_oneshot_config_channel(s_batt_adc_handle, s_batt_adc_chan, &config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure ADC1 channel %d: %s", (int)s_adc_chan, esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to configure ADC1 channel %d: %s", (int)s_batt_adc_chan, esp_err_to_name(err));
     }
 
     adc_cali_curve_fitting_config_t cali_config = {
         .unit_id  = ADC_UNIT_1,
-        .chan     = s_adc_chan,
+        .chan     = s_batt_adc_chan,
         .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
-    err = adc_cali_create_scheme_curve_fitting(&cali_config, &s_cali_handle);
+    err = adc_cali_create_scheme_curve_fitting(&cali_config, &s_batt_cali_handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Curve fitting calibration unavailable: %s (using linear fallback)", esp_err_to_name(err));
-        s_cali_handle = NULL;
+        s_batt_cali_handle = NULL;
     }
 
-    s_initialized = true;
+    s_batt_initialized = true;
     ESP_LOGI(TAG, "Battery driver initialized on GPIO %d (ADC1_CH%d, divider permille %d)",
-             adc_gpio, (int)s_adc_chan, CONFIG_TEF_BATTERY_DIVIDER_RATIO_PERMILLE);
+             adc_gpio, (int)s_batt_adc_chan, CONFIG_TEF_BATTERY_DIVIDER_RATIO_PERMILLE);
 
     /* Initial sample */
     battery_poll_and_notify();
@@ -239,21 +239,21 @@ esp_err_t battery_init(void) {
 }
 
 uint8_t battery_get_level_pct(void) {
-    if (!s_initialized) {
+    if (!s_batt_initialized) {
         battery_init();
     }
-    return s_filtered_pct;
+    return s_batt_filtered_pct;
 }
 
 uint32_t battery_get_voltage_mv(void) {
-    if (!s_initialized) {
+    if (!s_batt_initialized) {
         battery_init();
     }
-    return s_last_voltage_mv;
+    return s_batt_last_voltage_mv;
 }
 
 bool battery_is_charging(void) {
-    return s_is_charging;
+    return s_batt_is_charging;
 }
 
 void battery_poll_and_notify(void) {
@@ -262,42 +262,42 @@ void battery_poll_and_notify(void) {
         /* No valid reading available */
         return;
     }
-    s_last_voltage_mv = v_mv;
+    s_batt_last_voltage_mv = v_mv;
     uint8_t raw_pct = battery_voltage_to_pct(v_mv);
 
     /* Apply hysteresis and monotonicity filter */
-    if (s_filtered_pct == 0xFF) {
-        s_filtered_pct = raw_pct;
+    if (s_batt_filtered_pct == 0xFF) {
+        s_batt_filtered_pct = raw_pct;
     } else {
-        if (raw_pct < s_filtered_pct) {
+        if (raw_pct < s_batt_filtered_pct) {
             /* Discharging monotonically */
-            s_filtered_pct = raw_pct;
-            s_is_charging  = false;
-        } else if (raw_pct >= s_filtered_pct + 5) {
+            s_batt_filtered_pct = raw_pct;
+            s_batt_is_charging  = false;
+        } else if (raw_pct >= s_batt_filtered_pct + 5) {
             /* Significant upward jump -> charger connected / VBUS powered */
-            s_filtered_pct = raw_pct;
-            s_is_charging  = true;
+            s_batt_filtered_pct = raw_pct;
+            s_batt_is_charging  = true;
         }
         /* Minor upward jitter (< 5%) during discharge is filtered out */
     }
 
     int64_t now_us = esp_timer_get_time();
-    int delta = abs((int)s_filtered_pct - (int)s_last_notified_pct);
-    bool interval_elapsed = (now_us - s_last_notify_us) >=
+    int delta = abs((int)s_batt_filtered_pct - (int)s_batt_last_notified_pct);
+    bool interval_elapsed = (now_us - s_batt_last_notify_us) >=
                             ((int64_t)CONFIG_TEF_BATTERY_POLL_INTERVAL_SEC * 1000000LL);
 
-    if (s_last_notified_pct == 0xFF || delta >= CONFIG_TEF_BATTERY_DELTA_NOTIFY_PCT || interval_elapsed) {
-        s_last_notified_pct = s_filtered_pct;
-        s_last_notify_us    = now_us;
+    if (s_batt_last_notified_pct == 0xFF || delta >= CONFIG_TEF_BATTERY_DELTA_NOTIFY_PCT || interval_elapsed) {
+        s_batt_last_notified_pct = s_batt_filtered_pct;
+        s_batt_last_notify_us    = now_us;
 
         /* Post event to system event bus */
         esp_event_post(BATTERY_EVENTS, BATTERY_EVENT_LEVEL_CHANGED,
-                       &s_filtered_pct, sizeof(s_filtered_pct), 0);
+                       &s_batt_filtered_pct, sizeof(s_batt_filtered_pct), 0);
 
         /* Notify active BLE connections */
-        ble_hid_notify_battery_all(s_filtered_pct);
+        ble_hid_notify_battery_all(s_batt_filtered_pct);
 
         ESP_LOGD(TAG, "Battery updated: %lu mV, %u %% (charging=%s)",
-                 (unsigned long)s_last_voltage_mv, s_filtered_pct, s_is_charging ? "yes" : "no");
+                 (unsigned long)s_batt_last_voltage_mv, s_batt_filtered_pct, s_batt_is_charging ? "yes" : "no");
     }
 }

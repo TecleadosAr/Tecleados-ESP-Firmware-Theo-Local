@@ -31,6 +31,7 @@
 #include "split_bridge.h"
 #include "split_bench.h"
 #include "cfg_ble.h"
+#include "power_mgr.h"
 
 
 #define TAG "SPLIT_TK"
@@ -77,23 +78,8 @@ static portMUX_TYPE  s_defer_mux = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t s_task_handle = NULL;
 
 /* =========================================================================
- * Power management — only cycles on MASTER connect / matrix activity.
+ * Power management — delegated to unified power_mgr.
  * ========================================================================= */
-
-#if CONFIG_PM_ENABLE
-static void pm_apply_active(void)
-{
-    esp_pm_config_t cfg = {
-        .max_freq_mhz       = 240,
-        .min_freq_mhz       = 240,
-        .light_sleep_enable = false,
-    };
-    esp_err_t ret = esp_pm_configure(&cfg);
-    if (ret != ESP_OK) ESP_LOGW(TAG, "pm_active: %s", esp_err_to_name(ret));
-}
-#else
-static inline void pm_apply_active(void) {}
-#endif
 
 /* =========================================================================
  * ROLE_NEGOTIATE send — shared between dispatch and the CONNECTING tick
@@ -152,7 +138,7 @@ void split_task_handle_disconnect(const char *reason)
     split_bridge_reset_routing_standalone();
     split_config_sync_reset();
 
-    pm_apply_active();
+    power_mgr_activity_notify();
 
     uint8_t reason_byte = 0;
     esp_event_post(SPLIT_EVENTS, SPLIT_EVENT_DISCONNECTED,

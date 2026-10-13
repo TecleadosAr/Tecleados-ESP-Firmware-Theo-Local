@@ -37,6 +37,8 @@
 #include "ble_controller.h"
 #include "event_bus.h"
 #include "splitmod.h"
+#include "battery.h"
+#include "power_mgr.h"
 
 #define TAG "MAIN"
 
@@ -75,6 +77,9 @@ static void init_procedure(void) {
 
   ble_controller_init();
   status_module_init();
+
+  battery_init();
+  power_mgr_init();
 
   splitmod_init();
   kb_manager_start();

@@ -70,6 +70,7 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "../../components/config_module/cfg_layouts.c"
 #include "../../components/status_module/statusmod.c"
 #include "../../components/battery_module/battery.c"
+#include "../../components/power_mgr/power_mgr.c"
 
 /* Split production sources — GCC/Clang only.
  * split_protocol.h uses __attribute__((packed)) and a C23 fixed-type enum
@@ -104,6 +105,7 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "system/test_event_bus.c"
 #include "system/test_status_module.c"
 #include "battery/test_battery.c"
+#include "power/test_power_mgr.c"
 
 /* Split tests (GCC/Clang only — same constraint as production sources above) */
 #ifndef _MSC_VER

@@ -1,0 +1,51 @@
+menu "TEF Unified Power Manager Configuration"
+
+    config TEF_POWER_MGR
+        bool "Enable Unified Power Manager"
+        default y
+        help
+            Enables dynamic frequency scaling (DFS), CPU max-frequency locks,
+            and managed light/deep sleep state transitions.
+            If disabled, the CPU runs at static 240 MHz (legacy behavior).
+
+    config TEF_PM_IDLE_TIMEOUT_MS
+        int "Inactivity timeout to enter IDLE state (ms)"
+        default 5000
+        range 500 60000
+        depends on TEF_POWER_MGR
+        help
+            Inactivity time (no key press or traffic) before releasing the 240 MHz
+            CPU frequency lock and dropping to DFS base frequency (80 MHz).
+
+    config TEF_PM_ENABLE_LIGHT_SLEEP
+        bool "Enable Light Sleep in wireless mode"
+        default y
+        depends on TEF_POWER_MGR
+        help
+            Allows the system to enter light sleep when inactive in wireless mode.
+
+    config TEF_PM_LIGHT_SLEEP_TIMEOUT_MS
+        int "Inactivity timeout to enter Light Sleep (ms)"
+        default 30000
+        range 5000 600000
+        depends on TEF_PM_ENABLE_LIGHT_SLEEP
+        help
+            Inactivity time in milliseconds before transitioning to Light Sleep
+            when USB is disconnected and matrix is idle.
+
+    config TEF_PM_ENABLE_DEEP_SLEEP
+        bool "Enable Deep Sleep on long inactivity"
+        default y
+        depends on TEF_POWER_MGR
+        help
+            Allows the system to enter deep sleep after extended inactivity.
+
+    config TEF_PM_DEEP_SLEEP_TIMEOUT_MS
+        int "Inactivity timeout to enter Deep Sleep (ms)"
+        default 900000
+        range 60000 7200000
+        depends on TEF_PM_ENABLE_DEEP_SLEEP
+        help
+            Inactivity time in milliseconds before entering deep sleep (default 15 minutes = 900,000 ms).
+
+endmenu

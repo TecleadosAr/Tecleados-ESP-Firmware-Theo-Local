@@ -9,6 +9,7 @@
 #include "cfg_system.h"
 #include "comm_module.h"
 #include "comm_transport.h"
+#include "power_mgr.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -27,10 +28,12 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg) {
   case TINYUSB_EVENT_ATTACHED:
     ESP_LOGI(TAG, "USB mounted (host connected)");
     comm_transport_set_connected(COMM_TRANSPORT_USB, true);
+    power_mgr_set_usb_active(true);
     break;
   case TINYUSB_EVENT_DETACHED:
     ESP_LOGI(TAG, "USB unmounted (host disconnected)");
     comm_transport_set_connected(COMM_TRANSPORT_USB, false);
+    power_mgr_set_usb_active(false);
     break;
   default:
     break;
