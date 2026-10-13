@@ -270,6 +270,35 @@ flowchart TD
 
 ### FASE 3: Autonomía y Eficiencia Energética
 
+#### Checklist de Ejecución de Fase 3:
+- [x] **3.0. Spike de viabilidad (Autonomía y Eficiencia Energética)**
+  - [x] Documento de caracterización `implementations/baseline/POWER_SPIKE_FEASIBILITY.md`.
+  - [x] Análisis de viabilidad de BLE + Modem Sleep y fuente de reloj RC vs XTAL 32 kHz.
+  - [x] Análisis de ESP-NOW + Light Sleep y latencia en esclavo.
+  - [x] Aislamiento de sleep bajo conexión USB activa para proteger PHY de TinyUSB.
+  - [x] Medición y caracterización de latencia de wake-up desde Light Sleep (~1.5 ms) y Deep Sleep.
+- [x] **3.1. Driver real de batería**
+  - [x] Kconfig `CONFIG_TEF_BATTERY_ENABLE`, `CONFIG_TEF_BATTERY_ADC_GPIO` (default GPIO 7), `CONFIG_TEF_BATTERY_DIVIDER_RATIO_PERMILLE` (default 2000), `CONFIG_TEF_BATTERY_POLL_INTERVAL_SEC` (default 60), `CONFIG_TEF_BATTERY_DELTA_NOTIFY_PCT` (default 2).
+  - [x] Driver `components/battery_module/battery.c` con API moderna ESP-IDF 6.x `adc_oneshot` y calibración `adc_cali_create_scheme_curve_fitting`.
+  - [x] Filtro de mediana de 5 muestras para supresión de picos de corriente de transmisión RF.
+  - [x] Tabla LUT de descarga LiPo con interpolación lineal precisa (4.20 V -> 100%, 3.85 V -> 50%, 3.30 V -> 0%).
+  - [x] Filtro de monotonía e histéresis para eliminar fluctuaciones/rebotes de porcentaje durante descarga y detección de carga/VBUS.
+  - [x] Notificación periódica y por umbral a perfiles BLE (`ble_hid_notify_battery_all()`) y evento `BATTERY_EVENTS` / `BATTERY_EVENT_LEVEL_CHANGED` en el `event_bus`.
+  - [x] Reemplazo de `.battery_pct = 0xFF` hardcodeado en `split_dispatch.c` por `battery_get_level_pct()`.
+  - [x] Documentación de arquitectura en `components/battery_module/BATTERY_MODULE.md`.
+  - [x] Tests unitarios dedicados en `test/battery/test_battery.c`.
+- [x] **3.2. Gestor de energía unificado (`power_mgr`)**
+  - [x] Kconfig `CONFIG_TEF_POWER_MGR`, `CONFIG_TEF_PM_IDLE_TIMEOUT_MS` (5000 ms), `CONFIG_TEF_PM_LIGHT_SLEEP_TIMEOUT_MS` (30000 ms), `CONFIG_TEF_PM_DEEP_SLEEP_TIMEOUT_MS` (900000 ms = 15 min).
+  - [x] Implementación de `components/power_mgr/power_mgr.c` y `include/power_mgr.h`.
+  - [x] Eliminación de `pm_apply_active()` duplicada en `split_task.c` y `split_bridge.c`, reemplazada por `power_mgr_activity_notify()`.
+  - [x] Dueño único de `esp_pm_configure()` y gestión dinámica de frecuencia mediante lock `ESP_PM_CPU_FREQ_MAX`.
+  - [x] Máquina de estados: ACTIVE (240 MHz lock), IDLE (80 MHz DFS tickless tras 5s), LIGHT SLEEP (WFI tras 30s inalámbrico), DEEP SLEEP (>15 min o corte de batería).
+  - [x] Wake de Light Sleep con deshabilitación inmediata de wake por nivel en filas (GPIO 1..6) para prevenir bucles de interrupción (R13).
+  - [x] Wake de Deep Sleep mediante RTC EXT1 en filas (GPIO 1..6) con pad hold en columnas.
+  - [x] Integración con `kb_manager.c` y `usbmod.c`.
+  - [x] Documentación de arquitectura en `components/power_mgr/POWER_MGR_MODULE.md`.
+  - [x] Tests unitarios completos en `test/power/test_power_mgr.c`.
+
 #### 3.0. Spike de viabilidad (2–3 días, **gate de la fase**)
 Los consumos de v1 eran hipótesis. Antes de diseñar, medir con PPK2 y validar:
 1. **BLE + light sleep:** hoy `CONFIG_BT_CTRL_MODEM_SLEEP` está **sin definir** y el reloj de sleep BLE es el efectivo `0`; confirmar qué fuente de 32 kHz (XTAL externo vs. RC interno) tiene el hardware, porque determina si el chip *puede* dormir con BLE conectado y con qué precisión de conexión.
