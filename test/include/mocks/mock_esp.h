@@ -108,6 +108,26 @@ static inline esp_err_t esp_timer_start_once(esp_timer_handle_t timer, uint64_t 
     return ESP_OK;
 }
 
+static inline esp_err_t esp_timer_start_periodic(esp_timer_handle_t timer, uint64_t period_us) {
+    if (!timer) return ESP_ERR_INVALID_ARG;
+    timer->active = true;
+    timer->periodic = true;
+    timer->period_us = period_us;
+    timer->fire_time_us = _mock_timer_us + period_us;
+    return ESP_OK;
+}
+
+static inline void mock_timer_trigger(esp_timer_handle_t timer) {
+    if (timer && timer->active && timer->callback) {
+        timer->callback(timer->arg);
+        if (timer->periodic) {
+            timer->fire_time_us = _mock_timer_us + timer->period_us;
+        } else {
+            timer->active = false;
+        }
+    }
+}
+
 static inline esp_err_t esp_timer_stop(esp_timer_handle_t timer) {
     if (!timer) return ESP_ERR_INVALID_ARG;
     timer->active = false;

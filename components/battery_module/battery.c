@@ -25,7 +25,7 @@
 #endif
 
 #ifndef CONFIG_TEF_BATTERY_ADC_GPIO
-#define CONFIG_TEF_BATTERY_ADC_GPIO 7
+#define CONFIG_TEF_BATTERY_ADC_GPIO -1
 #endif
 
 #ifndef CONFIG_TEF_BATTERY_DIVIDER_RATIO_PERMILLE
@@ -67,6 +67,12 @@ static uint8_t                   s_batt_last_notified_pct = 0xFF;
 static int64_t                   s_batt_last_notify_us    = 0;
 static bool                      s_batt_is_charging       = false;
 static uint32_t                  s_batt_mock_voltage_mv   = 0;
+static esp_timer_handle_t        s_batt_timer             = NULL;
+
+static void battery_timer_cb(void *arg) {
+    (void)arg;
+    battery_poll_and_notify();
+}
 
 /* LiPo discharge curve LUT */
 typedef struct {
@@ -126,6 +132,12 @@ void battery_test_reset(void) {
     s_batt_last_notify_us    = 0;
     s_batt_is_charging       = false;
     s_batt_mock_voltage_mv   = 0;
+    s_batt_initialized       = false;
+    if (s_batt_timer) {
+        esp_timer_stop(s_batt_timer);
+        esp_timer_delete(s_batt_timer);
+        s_batt_timer = NULL;
+    }
 }
 
 static uint32_t read_battery_voltage_mv_internal(void) {
@@ -235,6 +247,21 @@ esp_err_t battery_init(void) {
 
     /* Initial sample */
     battery_poll_and_notify();
+
+    /* Start periodic polling timer if not already created */
+    if (s_batt_timer == NULL) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = &battery_timer_cb,
+            .name     = "batt_poll",
+        };
+        esp_err_t terr = esp_timer_create(&timer_args, &s_batt_timer);
+        if (terr == ESP_OK) {
+            uint64_t interval_us = (uint64_t)CONFIG_TEF_BATTERY_POLL_INTERVAL_SEC * 1000000ULL;
+            if (interval_us == 0) interval_us = 60ULL * 1000000ULL;
+            esp_timer_start_periodic(s_batt_timer, interval_us);
+        }
+    }
+
     return ESP_OK;
 }
 

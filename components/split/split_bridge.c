@@ -23,10 +23,6 @@
 #define BLE_USB_CMD_PAIR           0x02
 #define BLE_USB_CMD_CONNECT        0x03
 #define BLE_USB_CMD_TOGGLE_CONN    0x04
-
-/* =========================================================================
- * Matrix forwarding — registered as the kb_manager matrix_cb when SLAVE
- * =========================================================================
 #include "power_mgr.h"
 
 /* =========================================================================

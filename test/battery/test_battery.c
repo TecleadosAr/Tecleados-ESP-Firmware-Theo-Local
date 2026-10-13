@@ -85,3 +85,31 @@ TEST_CASE(battery, event_bus_notification_on_change) {
     memcpy(&reported_pct, ev->data, sizeof(reported_pct));
     TEST_ASSERT_EQUAL(15, reported_pct);
 }
+
+TEST_CASE(battery, disabled_pin_defaults_to_0xff) {
+    battery_test_reset();
+    /* Without mock voltage and with unassigned ADC pin (-1), level must remain 0xFF */
+    TEST_ASSERT_EQUAL(0xFF, battery_get_level_pct());
+    TEST_ASSERT_EQUAL(0, battery_get_voltage_mv());
+}
+
+TEST_CASE(battery, periodic_timer_elapsed_notification) {
+    battery_test_reset();
+    mock_events_reset();
+    mock_timer_set(0);
+
+    /* Initial reading at 50% */
+    battery_set_mock_voltage_mv(3850);
+    TEST_ASSERT_EQUAL(50, battery_get_level_pct());
+    mock_events_reset();
+
+    /* Advance time by 30 seconds (< 60s interval) with identical voltage (0% delta) */
+    mock_timer_advance(30000000LL);
+    battery_poll_and_notify();
+    TEST_ASSERT_EQUAL(0, mock_event_count_matching(BATTERY_EVENTS, BATTERY_EVENT_LEVEL_CHANGED));
+
+    /* Advance past 60 seconds interval -> periodic report forced even with 0% delta */
+    mock_timer_advance(31000000LL); /* Total 61 seconds */
+    battery_poll_and_notify();
+    TEST_ASSERT_EQUAL(1, mock_event_count_matching(BATTERY_EVENTS, BATTERY_EVENT_LEVEL_CHANGED));
+}

@@ -86,9 +86,9 @@ Under varying workload, resting voltage can rise temporarily by a few millivolts
 
 ## 3. Telemetry and System Integration
 
-1. **BLE Battery Service (BAS):**  
-   Whenever `battery_poll_and_notify()` detects $\Delta \ge 2\,\%$ or 60 s elapsed, it invokes `ble_hid_notify_battery_all()`, dispatching GATTS notifications to all subscribed host devices.
+1. **BLE Battery Service (BAS) & Periodic Timer:**  
+   `battery_init()` registers an `esp_timer` periodic callback ("batt_poll") at `CONFIG_TEF_BATTERY_POLL_INTERVAL_SEC` (default 60 s). Whenever `battery_poll_and_notify()` runs, if $\Delta \ge 2\,\%$ or interval elapsed, it invokes `ble_hid_notify_battery_all()`, dispatching GATTS notifications to all subscribed host devices.
 2. **ESP-NOW Split Heartbeat:**  
    In split setups, the Master echoes its live battery percentage via `resp.battery_pct = battery_get_level_pct()` in `split_dispatch.c`, and the Slave includes its own reading via `split_task.c`.
-3. **Event Bus:**  
-   Posts `BATTERY_EVENTS` / `BATTERY_EVENT_LEVEL_CHANGED` payload (`uint8_t`) so status, display, and RGB LED modules can dynamically react to low-battery states.
+3. **Event Bus & Critical Cutoff:**  
+   Posts `BATTERY_EVENTS` / `BATTERY_EVENT_LEVEL_CHANGED` payload (`uint8_t`) so status, display, RGB LED, and `power_mgr` can react (e.g. entering deep sleep cutoff if level hits 0%).

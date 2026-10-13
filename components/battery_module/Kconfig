@@ -9,13 +9,13 @@ menu "TEF Battery Module Configuration"
 
     config TEF_BATTERY_ADC_GPIO
         int "Battery ADC GPIO Pin"
-        default 7
+        default -1
         range -1 48
         depends on TEF_BATTERY_ENABLE
         help
-            GPIO pin for the battery voltage divider. On ESP32-S3, GPIO 7 corresponds to
-            ADC1_CH6 (allocated for split half battery sensing per pin budget).
-            Set to -1 to disable analog ADC reading.
+            GPIO pin for the battery voltage divider. On ESP32-S3 default hardware,
+            GPIO 7 is Column 0 of the switch matrix. Set to a dedicated pin (e.g. GPIO 10)
+            in custom PCB revisions, or -1 to disable analog ADC reading.
 
     config TEF_BATTERY_DIVIDER_RATIO_PERMILLE
         int "Voltage Divider Ratio in Permille (e.g. 2000 for 2.0x)"
