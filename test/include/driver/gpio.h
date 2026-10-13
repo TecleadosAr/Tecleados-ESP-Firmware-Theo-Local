@@ -124,3 +124,26 @@ static inline int gpio_get_level(gpio_num_t gpio_num) {
     }
     return 1;
 }
+
+static inline int gpio_wakeup_enable(gpio_num_t gpio_num, gpio_int_type_t intr_type) {
+    (void)gpio_num; (void)intr_type;
+    return 0;
+}
+static inline int gpio_wakeup_disable(gpio_num_t gpio_num) {
+    (void)gpio_num;
+    return 0;
+}
+static inline int gpio_hold_en(gpio_num_t gpio_num) {
+    (void)gpio_num;
+    return 0;
+}
+static inline int gpio_hold_dis(gpio_num_t gpio_num) {
+    (void)gpio_num;
+    return 0;
+}
+static inline void gpio_deep_sleep_hold_en(void) {}
+static inline void gpio_deep_sleep_hold_dis(void) {}
+static inline int rtc_gpio_pullup_en(gpio_num_t gpio_num) {
+    (void)gpio_num;
+    return 0;
+}

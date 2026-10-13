@@ -1180,6 +1180,16 @@ uint16_t ble_hid_get_connected_profiles_bitmap(void) {
     return bitmap;
 }
 
+void ble_hid_notify_battery_all(uint8_t level) {
+    if (s_is_suspended) return;
+    for (int i = 0; i < CFG_BLE_MAX_PROFILES; i++) {
+        uint16_t h = s_conn_handles[i];
+        if (h != BLE_HS_CONN_HANDLE_NONE && h < 0xFF00) {
+            ble_hid_notify_battery_level(h, level);
+        }
+    }
+}
+
 int ble_hid_get_pairing_profile(void) {
     return s_pairing_profile;
 }

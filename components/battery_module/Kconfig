@@ -1,0 +1,68 @@
+menu "TEF Battery Module Configuration"
+
+    config TEF_BATTERY_ENABLE
+        bool "Enable Battery Subsystem"
+        default y
+        help
+            Enables periodic battery monitoring, voltage sampling via ADC / fuel gauge,
+            and BAS / split telemetry reporting.
+
+    config TEF_BATTERY_ADC_GPIO
+        int "Battery ADC GPIO Pin"
+        default 7
+        range -1 48
+        depends on TEF_BATTERY_ENABLE
+        help
+            GPIO pin for the battery voltage divider. On ESP32-S3, GPIO 7 corresponds to
+            ADC1_CH6 (allocated for split half battery sensing per pin budget).
+            Set to -1 to disable analog ADC reading.
+
+    config TEF_BATTERY_DIVIDER_RATIO_PERMILLE
+        int "Voltage Divider Ratio in Permille (e.g. 2000 for 2.0x)"
+        default 2000
+        range 1000 10000
+        depends on TEF_BATTERY_ENABLE
+        help
+            Permille multiplier for the voltage divider.
+            2000 corresponds to a 2.0x divider (such as 1 M / 1 M or 100 k / 100 k).
+
+    config TEF_BATTERY_MIN_MV
+        int "Minimum Battery Cutoff Voltage (mV)"
+        default 3300
+        range 2500 3700
+        depends on TEF_BATTERY_ENABLE
+        help
+            Battery voltage in millivolts corresponding to 0% charge level.
+
+    config TEF_BATTERY_MAX_MV
+        int "Maximum Battery Full Voltage (mV)"
+        default 4200
+        range 3800 4500
+        depends on TEF_BATTERY_ENABLE
+        help
+            Battery voltage in millivolts corresponding to 100% charge level.
+
+    config TEF_BATTERY_POLL_INTERVAL_SEC
+        int "Battery Notification Interval (seconds)"
+        default 60
+        range 5 3600
+        depends on TEF_BATTERY_ENABLE
+        help
+            Maximum time between periodic battery percentage telemetry reports.
+
+    config TEF_BATTERY_DELTA_NOTIFY_PCT
+        int "Battery Delta Percentage for Notification"
+        default 2
+        range 1 50
+        depends on TEF_BATTERY_ENABLE
+        help
+            Change in battery percentage that immediately triggers a BLE / event_bus notification.
+
+    config TEF_BATTERY_I2C_FUEL_GAUGE
+        bool "Enable I2C Fuel Gauge (MAX17048)"
+        default n
+        depends on TEF_BATTERY_ENABLE
+        help
+            Enables I2C Fuel Gauge querying on GPIO 43 (SDA) / 44 (SCL).
+
+endmenu

@@ -13,6 +13,15 @@ ESP_EVENT_DECLARE_BASE(KB_EVENTS);
 ESP_EVENT_DECLARE_BASE(BLE_EVENTS);
 ESP_EVENT_DECLARE_BASE(CONFIG_EVENTS);
 ESP_EVENT_DECLARE_BASE(SPLIT_EVENTS);
+ESP_EVENT_DECLARE_BASE(BATTERY_EVENTS);
+
+/* =========================================================================
+ * BATTERY_EVENTS IDs
+ * ========================================================================= */
+
+typedef enum {
+    BATTERY_EVENT_LEVEL_CHANGED = 0, // payload: uint8_t (battery percentage 0-100)
+} battery_event_id_t;
 
 /* =========================================================================
  * KB_EVENTS IDs

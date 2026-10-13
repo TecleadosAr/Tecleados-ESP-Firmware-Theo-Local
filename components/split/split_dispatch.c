@@ -25,6 +25,7 @@
 #include "split_task.h"
 #include "cfg_ble.h"
 #include "tusb.h"
+#include "battery.h"
 
 #define TAG "SPLIT_DP"
 
@@ -277,7 +278,7 @@ static void handle_heartbeat_msg(const uint8_t *payload, size_t len)
             .proto_version = SPLIT_PROTO_VERSION,
             .state       = (uint8_t)split_session_get_state(),
             .role        = (uint8_t)role,
-            .battery_pct = 0xFF,
+            .battery_pct = battery_get_level_pct(),
             .rssi        = split_session_get_rssi(),
             .sent_us     = hb->sent_us,
         };

@@ -36,6 +36,9 @@ bool ble_hid_is_routing_active(void);
 /** @brief Returns a bitmask of connected profiles (bit N set = profile N is connected). */
 uint16_t ble_hid_get_connected_profiles_bitmap(void);
 
+/** @brief Notify current battery level to all connected BLE profiles. */
+void ble_hid_notify_battery_all(uint8_t level);
+
 /** @brief Returns the profile currently being paired, or -1 if not pairing. */
 int ble_hid_get_pairing_profile(void);
 
