@@ -18,4 +18,29 @@ menu "TEF Keyboard Configuration"
             Delay in microseconds after asserting a column pin before reading row pins.
             Default is 20 us (~13 us estimated RC time constant).
 
+    config TEF_EAGER_DEBOUNCE
+        bool "Enable eager debouncing (immediate keypress on first scan)"
+        default y
+        help
+            When enabled, a detected keypress is confirmed immediately on the first
+            scan (or after TEF_PRESS_CONFIRM_SCANS), reducing input latency from ~4-5 ms
+            to <1.2 ms. Release requires TEF_RELEASE_DEBOUNCE_SCANS consecutive low scans.
+
+    config TEF_PRESS_CONFIRM_SCANS
+        int "Scans required to confirm keypress"
+        default 1
+        range 1 10
+        depends on TEF_EAGER_DEBOUNCE
+        help
+            Number of consecutive active scans required before confirming a press.
+            Default is 1 (immediate lowest latency). Set to 2 to filter aggressive EMI glitches.
+
+    config TEF_RELEASE_DEBOUNCE_SCANS
+        int "Scans required to confirm key release"
+        default 5
+        range 1 20
+        help
+            Number of consecutive inactive scans required before releasing a key.
+            Default is 5 scans (5 ms at 1000 Hz).
+
 endmenu

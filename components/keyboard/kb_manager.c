@@ -13,6 +13,7 @@
 #include "kb_layout.h"
 #include "kb_macro.h"
 #include "kb_matrix.h"
+#include "kb_debounce.h"
 #include "kb_report.h"
 #include "kb_state.h"
 #include "kb_system_action.h"
@@ -36,7 +37,6 @@ static const char *TAG = "kb_manager";
 /* ---- Tuning ---- */
 static const uint32_t MAX_POLLING_RATE_HZ = 1000;
 static const uint32_t MIN_REPORT_RATE_HZ  = 1;   // Minimum Hz for forced periodic reports
-#define KB_DEBOUNCE_SCANS 5
 
 /* ---- USB system command codes (received over custom HID channel) ---- */
 #define SYS_CMD_INJECT_KEY    0x01
@@ -134,27 +134,6 @@ void kb_manager_set_remote_matrix(const uint8_t *bitmap)
     if (has_keys) {
         TaskHandle_t h = s_kb_task_handle;
         if (h) xTaskNotifyGive(h);
-    }
-}
-
-/* ---- Debounce ---- */
-static uint8_t s_debounce[KB_MATRIX_KEYS];
-
-static void debounce_update(const uint8_t *raw, uint8_t *stable) {
-    for (size_t i = 0; i < KB_MATRIX_KEYS; ++i) {
-        bool raw_pressed = kb_bit_get(raw, i);
-
-        if (raw_pressed) {
-            if (s_debounce[i] < KB_DEBOUNCE_SCANS) s_debounce[i]++;
-        } else {
-            if (s_debounce[i] > 0) s_debounce[i]--;
-        }
-
-        if (s_debounce[i] == 0) {
-            kb_bit_clear(stable, i);
-        } else if (s_debounce[i] >= KB_DEBOUNCE_SCANS) {
-            kb_bit_set(stable, i);
-        }
     }
 }
 
@@ -291,7 +270,7 @@ static void kb_manager_task(void *arg) {
         }
         portEXIT_CRITICAL(&s_injected_matrix_lock);
 
-        debounce_update(s_raw_matrix, s_matrix);
+        kb_debounce_update(s_raw_matrix, s_matrix);
 
         /* Merge remote half matrix (split keyboard MASTER mode; zero when slave/disconnected) */
         portENTER_CRITICAL(&s_remote_matrix_lock);
@@ -498,6 +477,7 @@ static void kb_manager_task(void *arg) {
 
 void kb_manager_start(void) {
     kb_state_init();
+    kb_debounce_init();
     kb_macro_init();
     kb_system_action_init();
     kb_custom_key_init();
