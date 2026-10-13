@@ -10,6 +10,7 @@
 
 #include "driver/gpio.h"
 #include "kb_matrix.h"
+#include "kb_matrix_hal.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -64,29 +65,28 @@ static bool kb_validate_pins(const kb_gpio_t *pins, size_t count, bool output_re
 #include "kb_bitmap.h"
 
 void kb_matrix_scan(uint8_t *out_matrix_bitmap, bool mirror_cols) {
-	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
-	const size_t col_count = sizeof(k_cols) / sizeof(k_cols[0]);
-	const size_t total_bits = row_count * col_count;
-	const size_t total_bytes = (total_bits + 7U) / 8U;
-
-	memset(out_matrix_bitmap, 0, total_bytes);
+	const size_t col_count = KB_MATRIX_COL_COUNT;
+	memset(out_matrix_bitmap, 0, KB_MATRIX_BITMAP_BYTES);
 
 	for (size_t c = 0; c < col_count; ++c) {
-		gpio_set_level(k_cols[c].gpio, 0);
+		kb_matrix_hal_select_col(c);
 #ifndef CONFIG_TEF_MATRIX_SETTLE_US
 #define CONFIG_TEF_MATRIX_SETTLE_US 20
 #endif
 		esp_rom_delay_us(CONFIG_TEF_MATRIX_SETTLE_US); // Configurable row settling: 45 kΩ pull-up × ~300 pF trace ≈ 13 µs
 
-		for (size_t r = 0; r < row_count; ++r) {
-			if (gpio_get_level(k_rows[r].gpio) == 0) {
-				size_t logical_col = mirror_cols ? (col_count - 1 - k_cols[c].index) : k_cols[c].index;
-				size_t bit_index = (k_rows[r].index * col_count) + logical_col;
-				kb_bit_set(out_matrix_bitmap, bit_index);
+		uint8_t rows = kb_matrix_hal_read_rows();
+		if (rows) {
+			size_t logical_col = mirror_cols ? (col_count - 1 - c) : c;
+			for (size_t r = 0; r < KB_MATRIX_ROW_COUNT; ++r) {
+				if (rows & (1U << r)) {
+					size_t bit_index = (r * col_count) + logical_col;
+					kb_bit_set(out_matrix_bitmap, bit_index);
+				}
 			}
 		}
 
-		gpio_set_level(k_cols[c].gpio, 1);
+		kb_matrix_hal_deselect_col(c);
 	}
 }
 
@@ -143,9 +143,8 @@ void kb_matrix_gpio_init(void) {
 
 	ESP_LOGI(TAG, "GPIO pins configured");
 
-	for (size_t i = 0; i < col_count; ++i) {
-		gpio_set_level(k_cols[i].gpio, 1);
-	}
+	kb_matrix_hal_init();
+	kb_matrix_hal_set_all_cols(1);
 
 	ESP_LOGI(TAG, "Columns level set to HIGH");
 }
@@ -176,13 +175,10 @@ void kb_matrix_init_isr(TaskHandle_t task_to_notify) {
 
 void kb_matrix_set_interrupts_enabled(bool enabled) {
 	const size_t row_count = sizeof(k_rows) / sizeof(k_rows[0]);
-	const size_t col_count = sizeof(k_cols) / sizeof(k_cols[0]);
 
 	if (enabled) {
 		// To detect ANY key press, drive ALL columns LOW
-		for (size_t i = 0; i < col_count; ++i) {
-			gpio_set_level(k_cols[i].gpio, 0);
-		}
+		kb_matrix_hal_set_all_cols(0);
 		// Enable interrupts on rows (falling edge since they are pulled up and columns are LOW)
 		for (size_t i = 0; i < row_count; ++i) {
 			gpio_set_intr_type(k_rows[i].gpio, GPIO_INTR_NEGEDGE);
@@ -195,8 +191,6 @@ void kb_matrix_set_interrupts_enabled(bool enabled) {
 			gpio_set_intr_type(k_rows[i].gpio, GPIO_INTR_DISABLE);
 		}
 		// Drive columns back to HIGH (default scanning state)
-		for (size_t i = 0; i < col_count; ++i) {
-			gpio_set_level(k_cols[i].gpio, 1);
-		}
+		kb_matrix_hal_set_all_cols(1);
 	}
 }

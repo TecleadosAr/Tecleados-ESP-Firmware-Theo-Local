@@ -58,6 +58,7 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 }
 #include "../../components/keyboard/kb_macro.c"
 #include "../../components/keyboard/kb_debounce.c"
+#include "../../components/keyboard/kb_matrix_hal.c"
 #include "../../components/keyboard/kb_matrix.c"
 #include "../../components/config_module/cfg_layouts.c"
 #include "../../components/status_module/statusmod.c"
