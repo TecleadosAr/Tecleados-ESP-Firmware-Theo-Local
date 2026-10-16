@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 /* ---- Types ---- */
 
@@ -47,15 +48,15 @@ static inline void mock_tick_advance(TickType_t delta) {
 #define pdTICKS_TO_MS(t)  ((uint32_t)(t))
 #define configTICK_RATE_HZ 1000
 
-/* ---- Critical sections (no-op on host) ---- */
+/* ---- Critical sections (pthread_mutex on host for thread-safety and TSan) ---- */
 
-typedef uint32_t portMUX_TYPE;
-#define portMUX_INITIALIZER_UNLOCKED 0
-#define portENTER_CRITICAL(mux)   (void)(mux)
-#define portEXIT_CRITICAL(mux)    (void)(mux)
-#define taskENTER_CRITICAL(mux)   (void)(mux)
-#define taskEXIT_CRITICAL(mux)    (void)(mux)
-#define taskYIELD()
+typedef pthread_mutex_t portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED PTHREAD_MUTEX_INITIALIZER
+#define portENTER_CRITICAL(mux)   pthread_mutex_lock(mux)
+#define portEXIT_CRITICAL(mux)    pthread_mutex_unlock(mux)
+#define taskENTER_CRITICAL(mux)   pthread_mutex_lock(mux)
+#define taskEXIT_CRITICAL(mux)    pthread_mutex_unlock(mux)
+#define taskYIELD()               sched_yield()
 
 /* ---- Task ---- */
 

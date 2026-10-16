@@ -13,6 +13,7 @@
 
 TEST_SETUP(kb_layout) {
     mock_nvs_reset();
+    cfg_layouts_register();
     /* Load with empty NVS → initializes default Base layout */
     cfg_layout_load_all();
 }
@@ -282,5 +283,45 @@ TEST_CASE(kb_layout, layer_mask_multithreaded_hammer) {
     // Cleanup
     kb_macro_process_action(ACTION_CODE_LAYER_CLEAR_ALL, true);
     TEST_ASSERT_EQUAL(1 << KB_LAYER_BASE, kb_macro_get_layer_mask());
+}
+
+static void *thread_hot_reload_scanner(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 2000; i++) {
+        uint16_t kc = cfg_layout_get_action_code(0, 0, (uint8_t)(i % 2));
+        kb_macro_process_action(kc, true);
+        kb_macro_tap_tick((int64_t)i * 1000LL);
+        kb_macro_process_action(kc, false);
+    }
+    return NULL;
+}
+
+static void *thread_hot_reload_mutator(void *arg) {
+    (void)arg;
+    cfg_layer_t dummy;
+    memset(&dummy, 0x11, sizeof(dummy));
+    for (int i = 0; i < 500; i++) {
+        cfg_layout_set_layer(0, &dummy);
+        on_macros_updated("stress_test");
+        layout_update_cb("ly_0");
+    }
+    return NULL;
+}
+
+TEST_CASE(kb_layout, concurrent_hot_reload_and_scan_stress) {
+    mock_nvs_reset();
+    cfg_layout_load_all();
+
+    pthread_t t1, t2;
+    int r1 = pthread_create(&t1, NULL, thread_hot_reload_scanner, NULL);
+    int r2 = pthread_create(&t2, NULL, thread_hot_reload_mutator, NULL);
+    TEST_ASSERT_EQUAL(0, r1);
+    TEST_ASSERT_EQUAL(0, r2);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    // Restore clean state
+    mock_nvs_reset();
+    cfg_layout_load_all();
 }
 

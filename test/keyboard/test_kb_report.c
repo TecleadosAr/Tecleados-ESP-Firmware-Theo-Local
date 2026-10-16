@@ -386,4 +386,150 @@ TEST_CASE(kb_report, report_pending_backoff_simulation) {
     TEST_ASSERT_EQUAL(1, s_pending_backoff_ms);
 }
 
+TEST_CASE(kb_report, tap_scheduler_lifecycle) {
+    mock_usb_reset();
+    _mock_usb_mounted = true;
+    _mock_usb_boot_protocol = false;
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+    memset(s_tap_slots, 0, sizeof(s_tap_slots));
+    memset(s_v_nkro, 0, sizeof(s_v_nkro));
+
+    mock_timer_set(1000000LL);
+    TEST_ASSERT_FALSE(kb_macro_has_active_taps());
+
+    kb_macro_fire_tap(0x04, 20, 0); // Key A, duration 20ms, delay 0
+    TEST_ASSERT_TRUE(kb_macro_has_active_taps());
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x04)); // Not pressed yet until tick
+
+    // Tick at 1000ms: fires press
+    kb_macro_tap_tick(1000000LL);
+    TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, 0x04));
+    TEST_ASSERT_TRUE(kb_macro_has_active_taps());
+
+    // Tick at 1010ms (+10ms): still pressed
+    kb_macro_tap_tick(1010000LL);
+    TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, 0x04));
+    TEST_ASSERT_TRUE(kb_macro_has_active_taps());
+
+    // Tick at 1020ms (+20ms): duration elapsed, fires release
+    kb_macro_tap_tick(1020000LL);
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x04));
+    TEST_ASSERT_FALSE(kb_macro_has_active_taps());
+}
+
+TEST_CASE(kb_report, tap_scheduler_delayed_press) {
+    mock_usb_reset();
+    _mock_usb_mounted = true;
+    _mock_usb_boot_protocol = false;
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+    memset(s_tap_slots, 0, sizeof(s_tap_slots));
+    memset(s_v_nkro, 0, sizeof(s_v_nkro));
+
+    mock_timer_set(1000000LL);
+    kb_macro_fire_tap(0x05, 30, 50); // Key B, duration 30ms, delay 50ms
+    TEST_ASSERT_TRUE(kb_macro_has_active_taps());
+
+    // At t = 1000ms: not due
+    kb_macro_tap_tick(1000000LL);
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x05));
+
+    // At t = 1049ms: not due yet
+    kb_macro_tap_tick(1049000LL);
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x05));
+
+    // At t = 1050ms: delay reached, press fires
+    kb_macro_tap_tick(1050000LL);
+    TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, 0x05));
+
+    // At t = 1079ms: duration not elapsed
+    kb_macro_tap_tick(1079000LL);
+    TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, 0x05));
+
+    // At t = 1080ms (+30ms from press): release fires
+    kb_macro_tap_tick(1080000LL);
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x05));
+    TEST_ASSERT_FALSE(kb_macro_has_active_taps());
+}
+
+TEST_CASE(kb_report, tap_scheduler_pool_overflow_17_slots) {
+    mock_usb_reset();
+    _mock_usb_mounted = true;
+    _mock_usb_boot_protocol = false;
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+    memset(s_tap_slots, 0, sizeof(s_tap_slots));
+    memset(s_v_nkro, 0, sizeof(s_v_nkro));
+
+    mock_timer_set(2000000LL);
+
+    // Fire 16 concurrent taps (actions 0x04..0x13)
+    for (uint16_t k = 0x04; k < 0x04 + 16; k++) {
+        kb_macro_fire_tap(k, 50, 0);
+    }
+    TEST_ASSERT_TRUE(kb_macro_has_active_taps());
+
+    // Attempt 17th tap (action 0x14) - should be dropped gracefully
+    kb_macro_fire_tap(0x14, 50, 0);
+
+    // Tick to activate the 16 accepted taps
+    kb_macro_tap_tick(2000000LL);
+
+    // Verify all 16 accepted keys are pressed
+    for (uint16_t k = 0x04; k < 0x04 + 16; k++) {
+        TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, (uint8_t)k));
+    }
+    // Verify 17th key was NOT pressed
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x14));
+
+    // Advance 50ms to release all 16 taps
+    kb_macro_tap_tick(2050000LL);
+    for (uint16_t k = 0x04; k < 0x04 + 16; k++) {
+        TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, (uint8_t)k));
+    }
+    TEST_ASSERT_FALSE(kb_macro_has_active_taps());
+}
+
+TEST_CASE(kb_report, tap_scheduler_releases_before_presses) {
+    mock_usb_reset();
+    _mock_usb_mounted = true;
+    _mock_usb_boot_protocol = false;
+    if (!s_v_nkro_mutex) {
+        s_v_nkro_mutex = xSemaphoreCreateMutex();
+    }
+    memset(s_tap_slots, 0, sizeof(s_tap_slots));
+    memset(s_v_nkro, 0, sizeof(s_v_nkro));
+
+    mock_timer_set(3000000LL);
+
+    // Manually configure slot 0 as WAIT_RELEASE for key 0x04 expiring at t = 3000ms
+    s_tap_slots[0].action_code = 0x04;
+    s_tap_slots[0].state = TAP_SLOT_WAIT_RELEASE;
+    s_tap_slots[0].release_deadline_us = 3000000LL;
+    kb_bit_set(s_v_nkro, 0x04);
+
+    // Manually configure slot 1 as WAIT_PRESS for same key 0x04 firing at t = 3000ms
+    s_tap_slots[1].action_code = 0x04;
+    s_tap_slots[1].state = TAP_SLOT_WAIT_PRESS;
+    s_tap_slots[1].press_deadline_us = 3000000LL;
+    s_tap_slots[1].release_deadline_us = 3050000LL;
+
+    // Both fire in the same tick: release clears 0x04, then press sets 0x04
+    kb_macro_tap_tick(3000000LL);
+
+    // If release was processed first and then press, key 0x04 remains pressed!
+    TEST_ASSERT_TRUE(kb_bit_get(s_v_nkro, 0x04));
+    TEST_ASSERT_EQUAL(TAP_SLOT_FREE, s_tap_slots[0].state);
+    TEST_ASSERT_EQUAL(TAP_SLOT_WAIT_RELEASE, s_tap_slots[1].state);
+
+    // Release of slot 1
+    kb_macro_tap_tick(3050000LL);
+    TEST_ASSERT_FALSE(kb_bit_get(s_v_nkro, 0x04));
+    TEST_ASSERT_FALSE(kb_macro_has_active_taps());
+}
+
 

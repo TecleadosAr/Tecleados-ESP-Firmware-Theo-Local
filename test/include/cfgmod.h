@@ -101,13 +101,18 @@ static inline void mock_nvs_inject(cfgmod_kind_t kind, const char *key,
     e->valid = true;
 }
 
+static size_t _mock_struct_size[CFGMOD_KIND_MAX + 1] = {0};
+
 /* ---- Stubbed cfgmod API ---- */
 
 static inline esp_err_t cfgmod_register_kind(cfgmod_kind_t kind,
                                              cfgmod_default_fn def_fn,
                                              cfgmod_on_update_fn update_fn,
                                              size_t struct_size) {
-    (void)kind; (void)def_fn; (void)update_fn; (void)struct_size;
+    (void)def_fn; (void)update_fn;
+    if (kind <= CFGMOD_KIND_MAX) {
+        _mock_struct_size[kind] = struct_size;
+    }
     return ESP_OK;
 }
 
@@ -138,15 +143,17 @@ static inline esp_err_t cfgmod_get_config(cfgmod_kind_t kind, const char *key,
 
 static inline esp_err_t cfgmod_set_config(cfgmod_kind_t kind, const char *key,
                                           const void *in_struct) {
+    size_t sz = (kind <= CFGMOD_KIND_MAX && _mock_struct_size[kind] > 0) ? _mock_struct_size[kind] : 64;
     for (int i = 0; i < _mock_nvs_count; i++) {
         if (_mock_nvs_store[i].valid &&
             _mock_nvs_store[i].kind == kind &&
             strcmp(_mock_nvs_store[i].key, key) == 0) {
-            memcpy(_mock_nvs_store[i].data, in_struct, _mock_nvs_store[i].len);
+            size_t copy_len = sz < _mock_nvs_store[i].len ? sz : _mock_nvs_store[i].len;
+            memcpy(_mock_nvs_store[i].data, in_struct, copy_len);
             return ESP_OK;
         }
     }
-    mock_nvs_inject(kind, key, in_struct, 512);
+    mock_nvs_inject(kind, key, in_struct, sz);
     return ESP_OK;
 }
 
