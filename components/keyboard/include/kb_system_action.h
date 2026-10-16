@@ -31,10 +31,14 @@ void kb_system_action_init(void);
 
 /**
  * @brief Poll all active trackers and fire timed events (hold, single-tap).
- * Called by the background task every 10 ms. Exposed for host-based testing
- * where the background task does not actually run.
+ * Called synchronously in the keyboard scan tick.
  */
 void kb_system_action_poll(void);
+
+/**
+ * @brief Returns true if any system action trackers are actively waiting for hold or double tap.
+ */
+bool kb_system_action_is_active(void);
 
 /**
  * @brief Process a raw system action press/release from the keyboard matrix.

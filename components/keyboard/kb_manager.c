@@ -230,8 +230,10 @@ static void kb_manager_task(void *arg) {
         if (now_us - s_last_scan_us < effective_interval_us) {
             /* If no keys are held and no report is pending delivery, sleep in interrupt
              * mode until a key wakes us. s_matrix_nonempty is updated after every debounce;
-             * use the cached value. Do not sleep if tap-hold resolver has pending timers. */
-            if (!s_matrix_nonempty && !s_report_pending && !kb_tap_hold_is_active() && !s_paused && !s_force_active) {
+             * use the cached value. Do not sleep if tap-hold, sys-action, or macro-taps have pending timers. */
+            if (!s_matrix_nonempty && !s_report_pending && !kb_tap_hold_is_active() &&
+                !kb_system_action_is_active() && !kb_macro_has_active_taps() &&
+                !s_paused && !s_force_active) {
                 bool injected_empty = true;
                 portENTER_CRITICAL(&s_injected_matrix_lock);
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
@@ -371,10 +373,14 @@ static void kb_manager_task(void *arg) {
             s_cb_last_valid = false;
         }
 
-        /* --- Process matrix edges --- */
+        /* --- Process matrix edges and synchronous timers --- */
         if (!s_matrix_cb) {
             kb_combo_check_reload();
             kb_custom_key_check_reload();
+            kb_combo_tick(now_us);
+            kb_tap_hold_tick(now_us);
+            kb_system_action_poll();
+            kb_macro_tap_tick(now_us);
         }
 
         bool boot_protocol = usb_keyboard_use_boot_protocol();
@@ -402,10 +408,6 @@ static void kb_manager_task(void *arg) {
                 for (size_t i = 0; i < KB_MATRIX_BITMAP_BYTES; i++) {
                     diff[i] = s_matrix[i] ^ (s_last_matrix_valid ? s_last_matrix[i] : 0);
                 }
-
-                // Tick the combo engine (flushes delayed keys) and tap-hold resolver
-                kb_combo_tick(now_us);
-                kb_tap_hold_tick(now_us);
 
                 for (size_t byte_idx = 0; byte_idx < KB_MATRIX_BITMAP_BYTES; byte_idx++) {
                     uint8_t d = diff[byte_idx];

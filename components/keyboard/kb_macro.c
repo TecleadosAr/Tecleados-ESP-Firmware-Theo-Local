@@ -34,10 +34,8 @@ static _Atomic uint32_t s_toggled_layers   = 0;
 
 /* ---- Macro task queues ---- */
 static QueueHandle_t s_macro_queue = NULL;
-static QueueHandle_t s_tap_queue   = NULL;
 
-/* Sentinel value: queue item with this macro_id is a fire-tap request */
-#define MACRO_ID_FIRE_TAP 0xFFFF
+/* Sentinel value: queue item with this macro_id is an NVS reload request */
 #define MACRO_ID_RELOAD   0xFFFE
 
 static SemaphoreHandle_t s_macro_mutex = NULL;
@@ -45,10 +43,6 @@ static SemaphoreHandle_t s_macro_mutex = NULL;
 typedef struct {
     uint16_t macro_id;
     bool     is_pressed;
-    /* fire-tap payload (used when macro_id == MACRO_ID_FIRE_TAP) */
-    uint16_t tap_action;
-    uint32_t tap_duration_ms;
-    uint32_t tap_delay_ms;
 } macro_queue_item_t;
 
 /* ---- Per-macro runtime state ---- */
@@ -378,27 +372,7 @@ static void macro_task(void *arg) {
     }
 }
 
-/* ============================================================
-   Tap worker tasks (fire-tap from custom keys / system actions)
-   ============================================================ */
 
-static void tap_worker_task(void *arg) {
-    macro_queue_item_t item;
-    while (1) {
-        if (!xQueueReceive(s_tap_queue, &item, portMAX_DELAY)) continue;
-
-        if (item.tap_delay_ms > 0) {
-            vTaskDelay(pdMS_TO_TICKS(item.tap_delay_ms));
-        }
-
-        uint32_t dur = item.tap_duration_ms > 0 ? item.tap_duration_ms : 10;
-        kb_macro_process_action(item.tap_action, true);
-        kb_macro_send_report();
-        vTaskDelay(pdMS_TO_TICKS(dur));
-        kb_macro_process_action(item.tap_action, false);
-        kb_macro_send_report();
-    }
-}
 
 /* ============================================================
    System and media action dispatch
@@ -620,16 +594,100 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
     }
 }
 
+/* ============================================================
+   Deterministic Tap Scheduler (replaces 4 FreeRTOS worker tasks)
+   ============================================================ */
+
+typedef enum {
+    TAP_SLOT_FREE = 0,
+    TAP_SLOT_WAIT_PRESS,   /* delay_ms > 0, waiting to fire press */
+    TAP_SLOT_WAIT_RELEASE, /* pressed, waiting to fire release */
+} tap_slot_state_t;
+
+typedef struct {
+    uint16_t         action_code;
+    tap_slot_state_t state;
+    int64_t          press_deadline_us;
+    int64_t          release_deadline_us;
+} tap_slot_t;
+
+#define MAX_TAP_SLOTS 16
+static tap_slot_t   s_tap_slots[MAX_TAP_SLOTS];
+static portMUX_TYPE s_tap_lock = portMUX_INITIALIZER_UNLOCKED;
+
 void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms, uint32_t delay_ms) {
-    if (!s_tap_queue) return;
-    macro_queue_item_t item = {
-        .macro_id        = MACRO_ID_FIRE_TAP,
-        .is_pressed      = false,
-        .tap_action      = action_code,
-        .tap_duration_ms = duration_ms,
-        .tap_delay_ms    = delay_ms,
-    };
-    xQueueSend(s_tap_queue, &item, 0);
+    if (action_code == 0) return;
+    uint32_t dur = duration_ms > 0 ? duration_ms : 10;
+    int64_t now_us = esp_timer_get_time();
+    int64_t press_at = now_us + (int64_t)delay_ms * 1000LL;
+    int64_t release_at = press_at + (int64_t)dur * 1000LL;
+
+    portENTER_CRITICAL(&s_tap_lock);
+    bool allocated = false;
+    for (int i = 0; i < MAX_TAP_SLOTS; i++) {
+        if (s_tap_slots[i].state == TAP_SLOT_FREE) {
+            s_tap_slots[i].action_code         = action_code;
+            s_tap_slots[i].press_deadline_us   = press_at;
+            s_tap_slots[i].release_deadline_us = release_at;
+            s_tap_slots[i].state               = TAP_SLOT_WAIT_PRESS;
+            allocated = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_tap_lock);
+
+    if (!allocated) {
+        ESP_LOGW(TAG, "Tap slot pool full — dropping tap 0x%04X", action_code);
+    }
+}
+
+void kb_macro_tap_tick(int64_t now_us) {
+    uint16_t presses[MAX_TAP_SLOTS];
+    int press_count = 0;
+    uint16_t releases[MAX_TAP_SLOTS];
+    int release_count = 0;
+
+    portENTER_CRITICAL(&s_tap_lock);
+    for (int i = 0; i < MAX_TAP_SLOTS; i++) {
+        if (s_tap_slots[i].state == TAP_SLOT_WAIT_PRESS) {
+            if (now_us >= s_tap_slots[i].press_deadline_us) {
+                presses[press_count++] = s_tap_slots[i].action_code;
+                s_tap_slots[i].state = TAP_SLOT_WAIT_RELEASE;
+            }
+        } else if (s_tap_slots[i].state == TAP_SLOT_WAIT_RELEASE) {
+            if (now_us >= s_tap_slots[i].release_deadline_us) {
+                releases[release_count++] = s_tap_slots[i].action_code;
+                s_tap_slots[i].state = TAP_SLOT_FREE;
+            }
+        }
+    }
+    portEXIT_CRITICAL(&s_tap_lock);
+
+    bool report_needed = false;
+    for (int i = 0; i < press_count; i++) {
+        kb_macro_process_action(presses[i], true);
+        report_needed = true;
+    }
+    for (int i = 0; i < release_count; i++) {
+        kb_macro_process_action(releases[i], false);
+        report_needed = true;
+    }
+    if (report_needed) {
+        kb_macro_send_report_nowait();
+    }
+}
+
+bool kb_macro_has_active_taps(void) {
+    portENTER_CRITICAL(&s_tap_lock);
+    bool active = false;
+    for (int i = 0; i < MAX_TAP_SLOTS; i++) {
+        if (s_tap_slots[i].state != TAP_SLOT_FREE) {
+            active = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_tap_lock);
+    return active;
 }
 
 /* ============================================================
@@ -659,6 +717,10 @@ void kb_macro_init(void) {
     atomic_store_explicit(&s_momentary_layers, 0, memory_order_relaxed);
     atomic_store_explicit(&s_toggled_layers, 0, memory_order_relaxed);
 
+    portENTER_CRITICAL(&s_tap_lock);
+    memset(s_tap_slots, 0, sizeof(s_tap_slots));
+    portEXIT_CRITICAL(&s_tap_lock);
+
     esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
                                on_layout_config_updated, NULL);
 
@@ -667,7 +729,6 @@ void kb_macro_init(void) {
     }
     s_v_nkro_mutex = xSemaphoreCreateMutex();
     s_macro_queue  = xQueueCreate(32, sizeof(macro_queue_item_t));
-    s_tap_queue    = xQueueCreate(32, sizeof(macro_queue_item_t));
 
     /* Allocate macro cache in PSRAM, fall back to internal RAM */
     s_macros = heap_caps_malloc(sizeof(cfg_macro_list_t), MALLOC_CAP_SPIRAM);
@@ -688,13 +749,6 @@ void kb_macro_init(void) {
 
     xTaskCreateWithCaps(macro_task, "kb_macro", 5120, NULL, 4, NULL,
                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-
-    for (int i = 0; i < 4; i++) {
-        char name[16];
-        snprintf(name, sizeof(name), "kb_tap_%d", i);
-        xTaskCreateWithCaps(tap_worker_task, name, 3072, NULL, 4, NULL,
-                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    }
 
     ESP_LOGI(TAG, "Macro engine initialized");
 }

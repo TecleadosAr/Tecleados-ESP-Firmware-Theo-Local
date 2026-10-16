@@ -63,6 +63,18 @@ esp_err_t kb_macro_send_report_blocking(uint32_t timeout_ms);
 void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms, uint32_t delay_ms);
 
 /**
+ * @brief Process active tap deadlines. Called synchronously in the keyboard scan tick.
+ *
+ * @param now_us Current time in microseconds.
+ */
+void kb_macro_tap_tick(int64_t now_us);
+
+/**
+ * @brief Returns true if any asynchronous tap actions are currently pending or held.
+ */
+bool kb_macro_has_active_taps(void);
+
+/**
  * @brief Blocked report timing and histogram statistics for kb_macro_send_report
  */
 typedef struct {

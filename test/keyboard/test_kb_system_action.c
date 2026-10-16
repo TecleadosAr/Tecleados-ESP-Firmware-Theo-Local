@@ -182,3 +182,19 @@ TEST_CASE(kb_system_action, duplicate_press_ignored_during_hold_wait) {
     TEST_ASSERT_EQUAL(2, count_events(KB_EV_PRESS));
     TEST_ASSERT_EQUAL(0, count_events(KB_EV_DOUBLE_TAP));
 }
+
+TEST_CASE(kb_system_action, is_active_lifecycle) {
+    TEST_ASSERT_FALSE(kb_system_action_is_active());
+    kb_system_action_process(TEST_ACTION, true);
+    TEST_ASSERT_TRUE(kb_system_action_is_active());
+
+    /* Release before hold: waiting for double tap -> still active */
+    mock_timer_advance(100000);
+    kb_system_action_process(TEST_ACTION, false);
+    TEST_ASSERT_TRUE(kb_system_action_is_active());
+
+    /* Advance past double tap timeout and poll: finishes -> not active */
+    mock_timer_advance(400000);
+    kb_system_action_poll();
+    TEST_ASSERT_FALSE(kb_system_action_is_active());
+}
