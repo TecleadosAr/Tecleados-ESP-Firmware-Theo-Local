@@ -123,8 +123,10 @@ esp_err_t cfg_layout_load_all(void) {
           ESP_LOGW(TAG, "Layer %d using defaults", i);
         }
 
+        portENTER_CRITICAL(&s_layout_lock);
         s_psram_cache[i] = layer_data;
         if (i == 0) s_dram_base = layer_data;
+        portEXIT_CRITICAL(&s_layout_lock);
     }
   }
   return ESP_OK;
@@ -281,19 +283,20 @@ esp_err_t cfg_layout_delete(uint8_t id) {
         s_idx.order[CFG_LAYOUT_MAX_COUNT - 1] = 0xFF;
     }
 
+    portENTER_CRITICAL(&s_layout_lock);
     if (s_psram_cache) {
         memset(&s_psram_cache[id], 0, sizeof(cfg_layer_t));
     }
+    if (id == s_swap_layer_idx) {
+        s_swap_layer_idx = 0xFF;
+        memset(&s_dram_swap, 0, sizeof(cfg_layer_t));
+    }
+    portEXIT_CRITICAL(&s_layout_lock);
 
     char key[16];
     snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, id);
     cfgmod_delete_storage(CFGMOD_KIND_LAYOUT, key);
     cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
-
-    if (id == s_swap_layer_idx) {
-        s_swap_layer_idx = 0xFF;
-        memset(&s_dram_swap, 0, sizeof(cfg_layer_t));
-    }
 
     config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
     strlcpy(ev.key, CFG_ST_LAYER_IDX, sizeof(ev.key));

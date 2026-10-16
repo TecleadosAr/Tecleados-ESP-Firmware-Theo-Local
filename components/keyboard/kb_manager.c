@@ -373,10 +373,12 @@ static void kb_manager_task(void *arg) {
             s_cb_last_valid = false;
         }
 
+        /* --- Synchronous config reload checks (both master and slave) --- */
+        kb_combo_check_reload();
+        kb_custom_key_check_reload();
+
         /* --- Process matrix edges and synchronous timers --- */
         if (!s_matrix_cb) {
-            kb_combo_check_reload();
-            kb_custom_key_check_reload();
             kb_combo_tick(now_us);
             kb_tap_hold_tick(now_us);
             kb_system_action_poll();

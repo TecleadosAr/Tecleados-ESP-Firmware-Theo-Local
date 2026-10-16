@@ -96,7 +96,7 @@ bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
   if (len > NKRO_BYTES) {
     len = NKRO_BYTES;
   }
-  uint8_t buf[NKRO_BYTES + 1];
+  uint8_t buf[NKRO_BYTES + 1] = {0};
   buf[0] = modifier;
   memcpy(buf + 1, bitmap, len);
 

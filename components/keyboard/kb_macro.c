@@ -485,10 +485,17 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
         uint16_t macro_id = action_code - ACTION_CODE_MACRO_MIN;
 
         size_t idx = 0;
-        if (s_macro_mutex) xSemaphoreTake(s_macro_mutex, pdMS_TO_TICKS(10));
+        bool locked = false;
+        if (s_macro_mutex) {
+            locked = (xSemaphoreTake(s_macro_mutex, pdMS_TO_TICKS(10)) == pdTRUE);
+            if (!locked) {
+                ESP_LOGW(TAG, "Timeout waiting for macro mutex");
+                return;
+            }
+        }
         const cfg_macro_t *m = find_macro(macro_id, &idx);
         if (!m) {
-            if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
+            if (locked) xSemaphoreGive(s_macro_mutex);
             return;
         }
 
@@ -496,7 +503,6 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
         uint8_t           mode = m->exec_mode;
         uint8_t           stack_max = m->stack_max;
         uint8_t           repeat_count = m->repeat_count;
-        if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
 
         if (is_pressed) {
             switch (mode) {
@@ -584,6 +590,7 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
                 break;
             }
         }
+        if (locked) xSemaphoreGive(s_macro_mutex);
         return;
     }
 
@@ -664,12 +671,13 @@ void kb_macro_tap_tick(int64_t now_us) {
     portEXIT_CRITICAL(&s_tap_lock);
 
     bool report_needed = false;
-    for (int i = 0; i < press_count; i++) {
-        kb_macro_process_action(presses[i], true);
-        report_needed = true;
-    }
+    /* Process releases first so expiring taps do not overwrite new presses of the same key */
     for (int i = 0; i < release_count; i++) {
         kb_macro_process_action(releases[i], false);
+        report_needed = true;
+    }
+    for (int i = 0; i < press_count; i++) {
+        kb_macro_process_action(presses[i], true);
         report_needed = true;
     }
     if (report_needed) {
