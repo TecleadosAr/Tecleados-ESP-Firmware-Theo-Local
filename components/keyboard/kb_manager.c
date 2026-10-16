@@ -372,6 +372,11 @@ static void kb_manager_task(void *arg) {
         }
 
         /* --- Process matrix edges --- */
+        if (!s_matrix_cb) {
+            kb_combo_check_reload();
+            kb_custom_key_check_reload();
+        }
+
         bool boot_protocol = usb_keyboard_use_boot_protocol();
         bool matrix_changed = !s_last_matrix_valid ||
                               memcmp(s_matrix, s_last_matrix, KB_MATRIX_BITMAP_BYTES) != 0;

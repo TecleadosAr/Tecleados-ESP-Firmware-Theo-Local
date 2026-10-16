@@ -25,3 +25,8 @@ bool kb_combo_process_key(uint8_t row, uint8_t col, bool is_pressed, uint16_t la
  * @param now_us Current timestamp (esp_timer_get_time)
  */
 void kb_combo_tick(int64_t now_us);
+
+/**
+ * Check and process deferred reload flag from the scan loop thread.
+ */
+void kb_combo_check_reload(void);

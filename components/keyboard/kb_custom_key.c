@@ -12,6 +12,7 @@
 #include "kb_macro.h"
 #include "kb_system_action.h"
 #include "event_bus.h"
+#include <stdatomic.h>
 
 static const char *TAG = "kb_ckey";
 
@@ -162,11 +163,19 @@ void kb_custom_key_reload(const char *key) {
     }
 }
 
+static _Atomic bool s_ckey_reload_pending = false;
+
+void kb_custom_key_check_reload(void) {
+    if (atomic_exchange_explicit(&s_ckey_reload_pending, false, memory_order_acq_rel)) {
+        kb_custom_key_reload("event_bus");
+    }
+}
+
 static void ckey_config_update_handler(void *arg, esp_event_base_t base,
                                        int32_t event_id, void *data) {
     const config_update_event_t *ev = (const config_update_event_t *)data;
     if (ev->kind == (uint8_t)CFGMOD_KIND_CKEY) {
-        kb_custom_key_reload(ev->key);
+        atomic_store_explicit(&s_ckey_reload_pending, true, memory_order_release);
     }
 }
 

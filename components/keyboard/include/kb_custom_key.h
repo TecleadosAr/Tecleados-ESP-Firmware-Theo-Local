@@ -19,6 +19,11 @@ void kb_custom_key_init(void);
 void kb_custom_key_reload(const char *key);
 
 /**
+ * @brief Check and process deferred reload flag from the scan loop thread.
+ */
+void kb_custom_key_check_reload(void);
+
+/**
  * @brief Process a key press/release whose action code is in
  * [ACTION_CODE_CKEY_MIN, ACTION_CODE_CKEY_MAX].
  *

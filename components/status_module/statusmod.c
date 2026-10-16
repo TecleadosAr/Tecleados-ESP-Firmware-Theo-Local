@@ -5,9 +5,12 @@
 #include "event_bus.h"
 #include "splitmod.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include <string.h>
 
 #define TAG "StatusModule"
+
+static portMUX_TYPE s_status_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 /* =========================================================================
  * Cached state — updated by event handlers, read by send_status_push().
@@ -35,12 +38,14 @@ static struct {
 
 static bool send_status_push(void) {
     statusmod_msg_t msg = {0};
+    portENTER_CRITICAL(&s_status_spinlock);
     msg.transport_mode   = s_cache.transport_mode;
     msg.selected_profile = s_cache.selected_profile;
     msg.pairing_profile  = s_cache.pairing_profile;
     msg.split_state      = s_cache.split_state;
     msg.split_role       = s_cache.split_role;
     msg.connected_bitmap = s_cache.connected_bitmap;
+    portEXIT_CRITICAL(&s_status_spinlock);
 
     return comm_send_message(COMM_TRANSPORT_BROADCAST, MODULE_STATUS, (const uint8_t *)&msg, sizeof(msg));
 }
@@ -57,6 +62,8 @@ static void status_on_ble_event(void *arg, esp_event_base_t base,
     // overwrite the master-pushed cache.
     if (splitmod_get_role() == SPLIT_ROLE_SLAVE) return;
 
+    bool state_changed = true;
+    portENTER_CRITICAL(&s_status_spinlock);
     switch ((ble_event_id_t)event_id) {
     case BLE_EVENT_PROFILE_CONNECTED: {
         int idx = *(int *)data;
@@ -91,9 +98,14 @@ static void status_on_ble_event(void *arg, esp_event_base_t base,
         s_cache.transport_mode = *(bool *)data ? 1 : 0;
         break;
     default:
-        return; // No state change — skip push.
+        state_changed = false;
+        break;
     }
-    send_status_push();
+    portEXIT_CRITICAL(&s_status_spinlock);
+
+    if (state_changed) {
+        send_status_push();
+    }
 }
 
 static void status_on_config_event(void *arg, esp_event_base_t base,
@@ -106,14 +118,18 @@ static void status_on_config_event(void *arg, esp_event_base_t base,
     if (ev->kind == (uint8_t)CFGMOD_KIND_CONNECTION) {
         // Refresh routing and selected_profile from config.
         const cfg_ble_state_t *st = cfg_ble_get_state();
+        portENTER_CRITICAL(&s_status_spinlock);
         s_cache.transport_mode   = st->ble_routing_enabled ? 1 : 0;
         s_cache.selected_profile = st->selected_profile;
+        portEXIT_CRITICAL(&s_status_spinlock);
         send_status_push();
     }
 }
 
 static void status_on_split_event(void *arg, esp_event_base_t base,
                                    int32_t event_id, void *data) {
+    bool state_changed = true;
+    portENTER_CRITICAL(&s_status_spinlock);
     switch ((split_event_id_t)event_id) {
     case SPLIT_EVENT_CONNECTED: {
         const split_peer_info_t *info = (const split_peer_info_t *)data;
@@ -163,9 +179,14 @@ static void status_on_split_event(void *arg, esp_event_base_t base,
         // State hasn't changed — just re-push so configurator sees it
         break;
     default:
-        return; // Unknown event — skip push
+        state_changed = false;
+        break;
     }
-    send_status_push();
+    portEXIT_CRITICAL(&s_status_spinlock);
+
+    if (state_changed) {
+        send_status_push();
+    }
 }
 
 #include "blemod.h"
@@ -176,15 +197,25 @@ static bool status_module_callback(comm_transport_t source, uint8_t *data, uint1
     // If we are the Master (or Standalone), refresh the live data from the stack
     // before responding. This allows the heartbeat poll to self-correct if
     // an earlier event push was lost.
-    if (splitmod_get_role() != SPLIT_ROLE_SLAVE) {
-        s_cache.connected_bitmap = ble_hid_get_connected_profiles_bitmap();
+    uint16_t conn_bm = 0;
+    uint8_t pairing_prof = 0xFF;
+    bool update_ble = (splitmod_get_role() != SPLIT_ROLE_SLAVE);
+    if (update_ble) {
+        conn_bm = ble_hid_get_connected_profiles_bitmap();
         int pairing = ble_hid_get_pairing_profile();
-        s_cache.pairing_profile = (pairing < 0) ? 0xFF : (uint8_t)pairing;
+        pairing_prof = (pairing < 0) ? 0xFF : (uint8_t)pairing;
     }
 
     split_status_t sst = splitmod_get_status();
+
+    portENTER_CRITICAL(&s_status_spinlock);
+    if (update_ble) {
+        s_cache.connected_bitmap = conn_bm;
+        s_cache.pairing_profile  = pairing_prof;
+    }
     s_cache.split_state = (uint8_t)sst.state;
     s_cache.split_role  = (uint8_t)sst.role;
+    portEXIT_CRITICAL(&s_status_spinlock);
 
     send_status_push();
     return true;
@@ -198,14 +229,16 @@ static bool status_module_callback(comm_transport_t source, uint8_t *data, uint1
 void status_module_init(void) {
     // Seed cache once from current config / module state.
     const cfg_ble_state_t *st = cfg_ble_get_state();
+    split_status_t sst = splitmod_get_status();
+
+    portENTER_CRITICAL(&s_status_spinlock);
     s_cache.transport_mode   = st->ble_routing_enabled ? 1 : 0;
     s_cache.selected_profile = st->selected_profile;
     s_cache.pairing_profile  = 0xFF;
     s_cache.connected_bitmap = 0;
-
-    split_status_t sst = splitmod_get_status();
     s_cache.split_state = (uint8_t)sst.state;
     s_cache.split_role  = (uint8_t)sst.role;
+    portEXIT_CRITICAL(&s_status_spinlock);
 
     // Subscribe to BLE events (all IDs), config connection updates, and split events.
     esp_event_handler_register(BLE_EVENTS, ESP_EVENT_ANY_ID,

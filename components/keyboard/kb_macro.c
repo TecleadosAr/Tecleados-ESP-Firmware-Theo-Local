@@ -38,6 +38,9 @@ static QueueHandle_t s_tap_queue   = NULL;
 
 /* Sentinel value: queue item with this macro_id is a fire-tap request */
 #define MACRO_ID_FIRE_TAP 0xFFFF
+#define MACRO_ID_RELOAD   0xFFFE
+
+static SemaphoreHandle_t s_macro_mutex = NULL;
 
 typedef struct {
     uint16_t macro_id;
@@ -306,6 +309,14 @@ static void macro_task(void *arg) {
     macro_queue_item_t item;
     while (1) {
         if (!xQueueReceive(s_macro_queue, &item, portMAX_DELAY)) continue;
+        if (item.macro_id == MACRO_ID_RELOAD) {
+            ESP_LOGI(TAG, "Reloading macros from NVS (queued)");
+            if (s_macro_mutex) xSemaphoreTake(s_macro_mutex, portMAX_DELAY);
+            macros_load_all(s_macros);
+            memset(s_rt_state, 0, sizeof(s_rt_state));
+            if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
+            continue;
+        }
         if (!item.is_pressed) continue;
 
         size_t idx = 0;
@@ -500,11 +511,18 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
         uint16_t macro_id = action_code - ACTION_CODE_MACRO_MIN;
 
         size_t idx = 0;
+        if (s_macro_mutex) xSemaphoreTake(s_macro_mutex, pdMS_TO_TICKS(10));
         const cfg_macro_t *m = find_macro(macro_id, &idx);
-        if (!m) return;
+        if (!m) {
+            if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
+            return;
+        }
 
         macro_rt_state_t *rt  = &s_rt_state[idx];
         uint8_t           mode = m->exec_mode;
+        uint8_t           stack_max = m->stack_max;
+        uint8_t           repeat_count = m->repeat_count;
+        if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
 
         if (is_pressed) {
             switch (mode) {
@@ -526,7 +544,7 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
                 break;
 
             case MACRO_EXEC_ONCE_STACK_N: {
-                uint8_t max_pending = m->stack_max > 0 ? m->stack_max : 1;
+                uint8_t max_pending = stack_max > 0 ? stack_max : 1;
                 if (rt->is_running) {
                     if (rt->pending_count < max_pending) rt->pending_count++;
                 } else {
@@ -566,7 +584,7 @@ void kb_macro_process_action(uint16_t action_code, bool is_pressed) {
 
             case MACRO_EXEC_BURST_N:
                 if (!rt->is_running) {
-                    rt->burst_remaining = m->repeat_count > 0 ? m->repeat_count : 1;
+                    rt->burst_remaining = repeat_count > 0 ? repeat_count : 1;
                     macro_queue_item_t item = { .macro_id = macro_id, .is_pressed = true };
                     xQueueSend(s_macro_queue, &item, 0);
                 }
@@ -620,9 +638,16 @@ void kb_macro_fire_tap(uint16_t action_code, uint32_t duration_ms, uint32_t dela
 
 static void on_macros_updated(const char *key) {
     (void)key;
-    ESP_LOGI(TAG, "Reloading macros from NVS");
-    macros_load_all(s_macros);
-    memset(s_rt_state, 0, sizeof(s_rt_state));
+    if (s_macro_queue) {
+        macro_queue_item_t item = { .macro_id = MACRO_ID_RELOAD, .is_pressed = true };
+        xQueueSend(s_macro_queue, &item, 0);
+    } else {
+        ESP_LOGI(TAG, "Reloading macros from NVS (direct)");
+        if (s_macro_mutex) xSemaphoreTake(s_macro_mutex, portMAX_DELAY);
+        macros_load_all(s_macros);
+        memset(s_rt_state, 0, sizeof(s_rt_state));
+        if (s_macro_mutex) xSemaphoreGive(s_macro_mutex);
+    }
 }
 
 /* ============================================================
@@ -637,6 +662,9 @@ void kb_macro_init(void) {
     esp_event_handler_register(CONFIG_EVENTS, CONFIG_EVENT_KIND_UPDATED,
                                on_layout_config_updated, NULL);
 
+    if (!s_macro_mutex) {
+        s_macro_mutex = xSemaphoreCreateMutex();
+    }
     s_v_nkro_mutex = xSemaphoreCreateMutex();
     s_macro_queue  = xQueueCreate(32, sizeof(macro_queue_item_t));
     s_tap_queue    = xQueueCreate(32, sizeof(macro_queue_item_t));

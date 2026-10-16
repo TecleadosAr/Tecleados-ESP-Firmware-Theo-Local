@@ -10,6 +10,7 @@
 #include "kb_layout.h"
 #include "kb_macro.h"
 #include "event_bus.h"
+#include <stdatomic.h>
 
 static const char *TAG = "kb_combo";
 
@@ -126,11 +127,19 @@ static void kb_combo_reload(const char *key) {
     s_suppressed_count = 0;
 }
 
+static _Atomic bool s_combo_reload_pending = false;
+
+void kb_combo_check_reload(void) {
+    if (atomic_exchange_explicit(&s_combo_reload_pending, false, memory_order_acq_rel)) {
+        kb_combo_reload("event_bus");
+    }
+}
+
 static void combo_config_update_handler(void *arg, esp_event_base_t base,
                                         int32_t event_id, void *data) {
     const config_update_event_t *ev = (const config_update_event_t *)data;
     if (ev->kind == (uint8_t)CFGMOD_KIND_COMBO) {
-        kb_combo_reload(ev->key);
+        atomic_store_explicit(&s_combo_reload_pending, true, memory_order_release);
     }
 }
 

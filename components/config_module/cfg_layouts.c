@@ -12,8 +12,11 @@
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
 
 #define TAG "cfg_layouts"
+
+static portMUX_TYPE s_layout_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static cfg_layer_t  s_dram_base;
 static cfg_layer_t  s_dram_swap;
@@ -42,9 +45,11 @@ static void layout_update_cb(const char *key) {
       ESP_LOGI(TAG, "Reloading layer %d from NVS", layer_id);
       cfg_layer_t tmp;
       if (cfgmod_get_config(CFGMOD_KIND_LAYOUT, key, &tmp) == ESP_OK) {
+        portENTER_CRITICAL(&s_layout_lock);
         if (s_psram_cache) s_psram_cache[layer_id] = tmp;
         if (layer_id == 0) s_dram_base = tmp;
         if (layer_id == s_swap_layer_idx) s_dram_swap = tmp;
+        portEXIT_CRITICAL(&s_layout_lock);
       }
     }
   } else if (strcmp(key, CFG_ST_LAYER_IDX) == 0) {
@@ -139,6 +144,7 @@ uint16_t cfg_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer) {
 
   uint16_t kc;
   
+  portENTER_CRITICAL(&s_layout_lock);
   if (layer == 0) {
     kc = s_dram_base.keys[row][col];
   } 
@@ -154,6 +160,7 @@ uint16_t cfg_layout_get_action_code(uint8_t row, uint8_t col, uint8_t layer) {
       kc = KB_KEY_TRANSPARENT; 
     }
   }
+  portEXIT_CRITICAL(&s_layout_lock);
 
   // No fallback here. kb_layout_get_action_code orchestrates layer fallback.
   return kc;
@@ -166,6 +173,7 @@ esp_err_t cfg_layout_get_layer(uint8_t layer, cfg_layer_t *out) {
   if (!out || layer >= CFG_LAYOUT_MAX_COUNT || !cfg_layout_exists(layer))
     return ESP_ERR_INVALID_ARG;
   
+  portENTER_CRITICAL(&s_layout_lock);
   if (s_psram_cache) {
     *out = s_psram_cache[layer];
   } else {
@@ -173,6 +181,7 @@ esp_err_t cfg_layout_get_layer(uint8_t layer, cfg_layer_t *out) {
     else if (layer == s_swap_layer_idx) *out = s_dram_swap;
     else memset(out, 0, sizeof(cfg_layer_t));
   }
+  portEXIT_CRITICAL(&s_layout_lock);
   return ESP_OK;
 }
 
@@ -188,9 +197,11 @@ esp_err_t cfg_layout_set_layer(uint8_t layer, const cfg_layer_t *in) {
 
   esp_err_t err = cfgmod_set_config(CFGMOD_KIND_LAYOUT, key, in);
   if (err == ESP_OK) {
+    portENTER_CRITICAL(&s_layout_lock);
     if (s_psram_cache) s_psram_cache[layer] = *in;
     if (layer == 0) s_dram_base = *in;
     if (layer == s_swap_layer_idx) s_dram_swap = *in;
+    portEXIT_CRITICAL(&s_layout_lock);
     ESP_LOGI(TAG, "Layer %d saved and cached", layer);
   }
   return err;
@@ -221,18 +232,24 @@ esp_err_t cfg_layout_create(const char *name, uint8_t *out_id) {
         }
     }
 
-    if (s_psram_cache) {
-        for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
-            for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
-                s_psram_cache[id].keys[r][c] = KB_KEY_TRANSPARENT;
-            }
+    cfg_layer_t new_layer;
+    memset(&new_layer, 0, sizeof(cfg_layer_t));
+    for (int r = 0; r < KB_MATRIX_ROW_COUNT; r++) {
+        for (int c = 0; c < KB_MATRIX_COL_COUNT; c++) {
+            new_layer.keys[r][c] = KB_KEY_TRANSPARENT;
         }
     }
+
+    portENTER_CRITICAL(&s_layout_lock);
+    if (s_psram_cache) {
+        s_psram_cache[id] = new_layer;
+    }
+    portEXIT_CRITICAL(&s_layout_lock);
 
     char key[16];
     snprintf(key, sizeof(key), CFG_ST_LAYER_FMT, id);
     
-    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, key, &s_psram_cache[id], sizeof(cfg_layer_t));
+    cfgmod_write_storage(CFGMOD_KIND_LAYOUT, key, s_psram_cache ? &s_psram_cache[id] : &new_layer, sizeof(cfg_layer_t));
     cfgmod_write_storage(CFGMOD_KIND_LAYOUT, CFG_ST_LAYER_IDX, &s_idx, sizeof(s_idx));
 
     config_update_event_t ev = { .kind = (uint8_t)CFGMOD_KIND_LAYOUT };
