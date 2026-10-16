@@ -1,75 +1,73 @@
 # Plan Integral de Implementación: Evolución Arquitectónica del Firmware (TEF)
 
 > **Documento:** `FIRMWARE_EVOLUTION_IMPLEMENTATION_PLAN.md`  
-> **Estado:** Revisado v2 — pendiente de aprobación  
+> **Estado:** Revisado v3 — Fases 0–3 completadas; Fases 4–5 reorientadas a calidad, robustez y estado general del firmware (sin nuevas features de hardware)  
 > **Rama de Trabajo:** `firmware-evolution`  
 > **Plataforma Objetivo:** ESP32-S3 (Xtensa dual-core, **ESP-IDF 6.0.2** — ver `sdkconfig` y `main/idf_component.yml` que exige `idf >= 6.0`) & Configurator (React 19 / Vite / TS)  
 > **Fecha:** Octubre 2026
 
 ---
 
-## 0. Registro de Revisión (qué cambió respecto a v1 y por qué)
+## 0. Registro de Revisión (qué cambió respecto a v1/v2 y por qué)
 
 Cada afirmación del plan original fue contrastada contra el código. Resumen de hallazgos que **cambian el diseño**:
 
-| # | Afirmación en v1 | Realidad verificada en el repo | Consecuencia en v2 |
+| # | Afirmación en v1/v2 | Realidad verificada en el repo | Consecuencia en v2/v3 |
 |---|---|---|---|
 | R1 | Toolchain ESP-IDF v5.5, CI con `espressif/idf:v5.5` | `sdkconfig` = **IDF 6.0.2**; `main/idf_component.yml` pide `idf >= 6.0` | CI y APIs (ADC, GPIO) se planifican para IDF 6.x |
-| R2 | Flashear app en `0x10000` | [`partitions.csv`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/partitions.csv): app `factory` en **`0x90000`**, NVS `0x9000` (512 KB), **sin particiones OTA** | Offsets se leen de `flasher_args.json`, nunca hardcodeados; se evalúa OTA (§5.1) |
-| R3 | "Liberar >9 KB de DRAM interna" al unificar tap-workers | Las 4 tareas `kb_tap_*` se crean con `MALLOC_CAP_SPIRAM` ([`kb_macro.c#L611-L613`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L611-L613)); solo `comm_timeout_task` (4 KB) está en DRAM interna | Ahorro real: ~4 KB DRAM + ~12 KB PSRAM. Prioridad baja |
+| R2 | Flashear app en `0x10000` | [`partitions.csv`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/partitions.csv): app `factory` en **`0x90000`**, NVS `0x9000` (512 KB), **sin particiones OTA** | Descartado en v3 junto con el flasher web (R22) |
+| R3 | "Liberar >9 KB de DRAM interna" al unificar tap-workers | Las 4 tareas `kb_tap_*` se crean con `MALLOC_CAP_SPIRAM` ([`kb_macro.c#L611-L613`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L611-L613)); solo `comm_timeout_task` (4 KB) está en DRAM interna | `comm_timeout_task` ya eliminada (1.4); `kb_tap_0..3` y `kb_sys_action` pasan a consolidación de tareas en §4.3 |
 | R4 | Mailbox `xQueueOverwrite` de `kb_report_payload_t` | El reporte se arma **desde el estado compartido** `s_v_nkro` en `kb_macro_send_report()`; lo llaman `kb_manager`, `macro_task`, `tap_worker` y `kb_custom_key` | Mailbox de payload es innecesario y puede perder un *press* corto; se usa notificación + snapshot (§1.2) |
 | R5 | El split sync de custom keys solo requiere subir cota a 120 y agregar `vTaskDelay` cada 8 paquetes | El push ya es **stop-and-wait con ACK** (`on_ack`, sem de TX); la cota `64` es real (macros `64` y combos `32` también están hardcodeados) | Fix de 3 líneas + constantes; **no** agregar delays |
 | R6 | "Estado actual: 36 % de CPU" por settling | Cierto **solo mientras hay teclas activas**; en reposo se usa ISR + `ulTaskNotifyTake` | Objetivos de CPU recalculados (§2.1) |
 | R7 | Reducir settling a 5–8 µs "porque es seguro" | El propio comentario de [`kb_matrix.c#L77`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_matrix.c#L77) calcula ~13 µs de constante RC | Se hace **parametrizable y medido con osciloscopio**, no fijado a ciegas |
 | R8 | `GPIO.in1.data` + dos máscaras (low/high) | Filas = GPIO1–6, todas en el banco bajo (<32) | Basta una lectura de `GPIO.in`/`GPIO_IN_REG`; no hace falta `in1` |
 | R9 | `esp_adc_cal_characterize` | API legacy eliminada; en S3 se usa `adc_cali_create_scheme_curve_fitting` | Corregido (§3.1) |
-| R10 | Pin ADC "ADC1" sin especificar | **GPIO1–10 (todo ADC1) están ocupados por la matriz**; ADC2 (GPIO11–20) también (11–18 matriz, 19/20 USB) | Bloqueante de hardware → decisión previa en Fase 0 |
+| R10 | Pin ADC "ADC1" sin especificar | **GPIO1–10 (todo ADC1) están ocupados por la matriz**; ADC2 (GPIO11–20) también (11–18 matriz, 19/20 USB) | Mitigado en 3.1 con `CONFIG_TEF_BATTERY_ADC_GPIO = -1` (deshabilitado por defecto sin hardware dedicado) |
 | R11 | Divisor 100 kΩ/100 kΩ | Drena 4.2 V/200 kΩ ≈ **21 µA** ≈ todo el presupuesto de Deep Sleep (<20 µA) | Divisor de alta impedancia o gateado (§3.1) |
 | R12 | "BAS y telemetría split por implementar" | BAS **ya existe** ([`ble_hid_service.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/ble_module/ble_hid_service.c) read + `ble_hid_notify_battery_level`), y `split_protocol.h` ya tiene `battery_pct` (heartbeat en `split_task.c#L249`) | El driver ADC reemplaza el símbolo `weak`; el resto es cableado |
 | R13 | Wake de light-sleep por GPIO "negedge", "<10 µs" | En light sleep el wake por GPIO es **por nivel** (`gpio_wakeup_enable(..., LOW_LEVEL)`); la latencia es ~cientos de µs–ms (hay `ESP_SLEEP_WAIT_FLASH_READY_EXTRA_DELAY=2000`) | Rediseño del wake y de las métricas (§3.2) |
 | R14 | ESP-NOW con "DTIM" en light sleep | ESP-NOW no tiene AP/DTIM; requiere `esp_now_set_wake_window` + intervalo de wake sincronizado. Además `CONFIG_BT_CTRL_MODEM_SLEEP` está **deshabilitado** hoy | Spike de viabilidad previo (§3.0) |
-| R15 | Dongle con "ESP32-C3 o S3 Mini" y endpoints USB HID | El **C3 no tiene USB OTG** (solo USB-Serial-JTAG): no puede ser dispositivo HID | Solo S3 (o S2). Además `splitmod` soporta **un único peer** |
-| R16 | Dongle = "sub-proyecto ligero" | Layers, macros, combos, custom keys y config viven en el *master* | El dongle es una **variante de build del master** (§4.1) |
-| R17 | Ejemplo de display Sharp LS027B7DH01 | Es un panel de 2.7" (400×240), no apto para un teclado; el de Nice!View es LS011B7DH03 (160×68) | Corregido (§4.4) |
+| R15–R17, R20 | Nuevas features en Fases 4–5 (Dongle, Encoders, Display, Trackball, Flasher web, extensión de batería) | La intencionalidad del plan es **mejorar el estado general y la calidad del firmware actual**, no agregar nuevas features ni periféricos de hardware | **Reemplazadas en v3 (R22):** Fases 4 y 5 pasan a enfocarse en concurrencia, memoria interna (DRAM), higiene arquitectónica y cobertura integral de tests |
 | R18 | "Home-row mods" desde cero con *Permissive Hold* **y** *Hold-on-other-key-press* | Ya existen engine tap/hold/double-tap ([`kb_system_action.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_system_action.c)) y `CKEY_MODE_MULTI_ACTION`; ambas reglas son **flavors excluyentes**, no complementarios | Se audita lo existente y se agrega un resolvedor *interrupt-aware* (§2.4) |
 | R19 | Tests y CI al final (Fases 5.2/5.3) | `test/run_tests.sh` falla hoy en el primer `#include` (`event_bus.h` no encontrado; faltan `-I../components/...`) | **Se adelantan a Fase 0**: sin red de seguridad no se debe tocar el núcleo |
-| R20 | Mouse HID ya disponible en el dongle ("Endpoint HID 2") | [`usb_descriptors.h`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/include/usb_descriptors.h) solo define teclado + consumer | Mouse HID (USB **y** BLE report map) es trabajo nuevo (§4.5) |
 | R21 | `atomic_uint_least16_t` | Xtensa solo tiene `S32C1I` nativo de 32 bits; atomics de 16 bits caen en emulación con spinlock; además `kb_macro_get_layer_mask()` **escribe** (limpia capas borradas) siendo un getter | `_Atomic uint32_t` + CAS (§1.3); tests host pasan a `-std=c11` |
+| R22 | **Pivote v3 (Fases 4 y 5):** Agregar periféricos nuevos (batería extendida, encoders, dongle, display, trackball, flasher) | Auditoría del código actual revela deuda técnica real: condiciones de carrera en `comm_tx`, `kb_system_action` y hot-reload de NVS (`kb_combo`, `kb_custom_key`, `kb_macro`, `cfg_layouts`, `statusmod`), 30 KB de `.bss` en DRAM interna (`s_tx_buf`, `s_rx_buf`, `s_cfg_resp_buf`), acceso no serializado a TinyUSB, y módulos críticos sin tests unitarios | **Fase 4** sanea concurrencia, thread-safety, tareas redundantes y DRAM interna; **Fase 5** cierra brechas de tests unitarios, elimina código muerto/magic numbers y endurece el análisis estático |
 
 ---
 
 ## 1. Visión y Objetivos
 
-TEF ya cuenta con USB NKRO, BLE multi-perfil (NimBLE), enlace split cifrado sobre ESP-NOW (X25519 + AES-128-CCM), protocolo *Blast+Reconcile* y un configurador web. El objetivo es llevarlo a un producto *daily-driver wireless* / *gaming-grade* en **6 fases secuenciales, cada una entregable y reversible**:
+TEF ya cuenta con USB NKRO, BLE multi-perfil (NimBLE), enlace split cifrado sobre ESP-NOW (X25519 + AES-128-CCM), protocolo *Blast+Reconcile* y un configurador web. El objetivo de este plan **no es agregar nuevas features de hardware**, sino consolidar la **calidad, estabilidad, seguridad de concurrencia, uso eficiente de memoria y mantenibilidad del firmware existente** en **6 fases secuenciales, cada una entregable y reversible**:
 
 ```mermaid
 flowchart TD
-    F0["Fase 0: Fundaciones (tests, CI, métricas, pines, versión de protocolo)"] --> F1["Fase 1: Core y concurrencia"]
+    F0["Fase 0: Fundaciones (tests, CI, métricas, versión de protocolo)"] --> F1["Fase 1: Core y concurrencia inicial"]
     F1 --> F2["Fase 2: Latencia + Tap-Hold avanzado"]
-    F2 --> F3["Fase 3: Energía"]
-    F3 --> F4["Fase 4: Hardware extendido (Dongle, Encoders, Display, Trackball)"]
-    F3 --> F5["Fase 5: Ecosistema web (Flasher + Releases)"]
-    F4 -.-> F5
+    F2 --> F3["Fase 3: Gestión de energía (power_mgr)"]
+    F3 --> F4["Fase 4: Saneamiento de concurrencia, DRAM interna y tareas"]
+    F4 --> F5["Fase 5: Cobertura integral de tests, higiene de código y calidad"]
 ```
 
 ### Principios rectores
-1. **Medir antes de optimizar**: cada optimización tiene una métrica base capturada en Fase 0.
-2. **Un cambio = un commit atómico = una métrica o test que lo justifica.**
-3. **Feature flags (Kconfig) para todo cambio de comportamiento observable** (`CONFIG_TEF_EAGER_DEBOUNCE`, `CONFIG_TEF_MATRIX_SETTLE_US`, `CONFIG_TEF_POWER_MGR`…), permitiendo rollback sin revertir.
-4. **Definition of Done por fase** (§6): tests host verdes, `idf.py build` sin warnings nuevos, documentación del módulo actualizada (`components/*/*_MODULE.md` y, si cambia la arquitectura, `universe/modules/`), medición adjunta.
+1. **Cero nuevas features de producto en Fases 4–5**: todo esfuerzo se dedica a eliminar deuda técnica, condiciones de carrera, consumo innecesario de DRAM interna y brechas de testing.
+2. **Medir antes de optimizar**: cada optimización tiene una métrica base capturada en Fase 0.
+3. **Un cambio = un commit atómico = una métrica o test que lo justifica.**
+4. **Feature flags (Kconfig) para todo cambio de comportamiento observable** (`CONFIG_TEF_EAGER_DEBOUNCE`, `CONFIG_TEF_MATRIX_SETTLE_US`, `CONFIG_TEF_POWER_MGR`…), permitiendo rollback sin revertir.
+5. **Definition of Done por fase** (§6): tests host verdes (`--asan` y `--tsan`), `idf.py build` sin warnings nuevos, documentación del módulo actualizada (`components/*/*_MODULE.md` y, si cambia la arquitectura, `universe/modules/`), medición adjunta.
 
 ---
 
 ## 2. Mapa de Fases y Módulos Afectados
 
-| Fase | Componentes | Objetivo | Riesgo |
+| Fase | Componentes | Objetivo | Estado / Riesgo |
 |---|---|---|---|
-| **0** | `test/`, `.github/workflows/`, `split_protocol`, docs de hardware | Red de seguridad, línea base medida, presupuesto de pines, versión de protocolo split | Bajo |
-| **1** | `keyboard` (`kb_manager`, `kb_macro`, `kb_matrix`), `split_config_sync`, `comm_module` | Cero bloqueos en el scan loop; sync completo de custom keys; concurrencia correcta | Bajo-Medio |
-| **2** | `keyboard` (`kb_matrix`, `kb_manager`, `kb_system_action`, `kb_custom_key`), `config_module`, `configurator` | Latencia interna < 1.2 ms (p99); resolvedor Tap-Hold con flavors | Medio |
-| **3** | `battery_module`, `power_mgr` (nuevo), `split`, `ble_module` | Batería real y light/deep sleep | **Alto** (depende de spike) |
-| **4** | `dongle` (variante de build), `encoder`, `display`, `pointing` | Hardware extendido | Medio-Alto (pines) |
-| **5** | `configurator/`, CI release | Flasher in-browser y releases publicadas | Medio |
+| **0** | `test/`, `.github/workflows/`, `split_protocol`, docs de hardware | Red de seguridad, línea base medida, versión de protocolo split | **Completada** (Bajo) |
+| **1** | `keyboard` (`kb_manager`, `kb_macro`, `kb_matrix`), `split_config_sync`, `comm_module` | Cero bloqueos en el scan loop; sync completo de custom keys; concurrencia inicial | **Completada** (Bajo-Medio) |
+| **2** | `keyboard` (`kb_matrix`, `kb_manager`, `kb_debounce`, `kb_tap_hold`), `config_module`, `configurator` | Latencia interna < 1.2 ms (p99); resolvedor Tap-Hold con flavors | **Completada** (Medio) |
+| **3** | `power_mgr`, `battery_module` (opcional/deshabilitado sin pin), `split`, `ble_module` | Gestión unificada de frecuencia (`power_mgr`) y estados de reposo | **Completada** (Medio) |
+| **4** | `comm_module`, `usb_module`, `keyboard` (`kb_combo`, `kb_custom_key`, `kb_macro`, `kb_system_action`), `config_module`, `status_module`, `rgb_module` | Eliminar data races multi-hilo, serializar TinyUSB, liberar ≥30 KB de DRAM interna (`.bss` → PSRAM) y consolidar tareas redundantes | **Completada** (Medio) |
+| **5** | `test/` (`keyboard`, `comm`, `split`, `config`), `main/`, `cfgmod`, `ble_module`, `button_module`, CI | Cobertura unitaria de motores críticos (`kb_combo`, `kb_macro`, `kb_custom_key`, `Blast+Reconcile`, `split_role`), higiene de código y endurecimiento de compilación | **Pendiente** (Bajo-Medio) |
 
 ---
 
@@ -339,88 +337,160 @@ Los consumos de v1 eran hipótesis. Antes de diseñar, medir con PPK2 y validar:
 
 ---
 
-### FASE 4: Hardware Extendido y Periféricos
+### FASE 4: Saneamiento de Concurrencia, Memoria Interna (DRAM) y Arquitectura
 
-> Todo lo de esta fase depende del **presupuesto de pines (0.4)** y de `proto_version` (0.5). Orden por riesgo/valor: **4.1 Encoders → 4.2 Dongle → 4.3 Display → 4.4 Trackball.**
+> **Propósito:** Eliminar condiciones de carrera reales entre tareas, serializar accesos no thread-safe, liberar ≥ 30 KB de DRAM interna estática (`.bss` → PSRAM) y consolidar tareas de temporización redundantes sin añadir nuevas features de producto.
 
-#### 4.1. Encoders rotatorios
-* Modelar cada encoder como **dos teclas virtuales** (CW/CCW) integradas al *keymap/capas* existentes → el editor de layouts del configurador funciona sin esquema nuevo, y los eventos del esclavo viajan por el mismo canal de matriz.
-* Decodificación con **PCNT** (glitch filter por hardware) + una tarea/ISR que emite *press+release* virtual por *detent*. Parámetro de pasos por detent y debounce de *detent*.
+#### Checklist de Ejecución de Fase 4:
+- [x] **4.1. Sincronización y Thread-Safety en el motor de transporte (`comm_module` y `usb_module`)**
+  - [x] Proteger el estado compartido `s_tx_*` y `comm_erase_tx_buffer()` en `components/comm_module/comm_tx.c` frente al acceso concurrente entre `comm_tx_task` y `comm_proc_task`.
+  - [x] Evitar `xSemaphoreGive(s_tx_done_sem)` espurio cuando `comm_erase_tx_buffer()` es invocado por el propio timeout de `comm_tx_task`.
+  - [x] Serializar las invocaciones a `tud_hid_n_report` / `tud_hid_n_keyboard_report` en `components/usb_module/usbmod.c` mediante mutex ligero.
+  - [x] Eliminar el VLA `uint8_t buf[len + 1]` en `usb_send_keyboard_nkro()`, validar `tud_mounted() && tud_hid_n_ready()` antes de transmitir, quitar `taskYIELD()` redundante en `usb_task()` y remover funciones de test con espera activa infinita (`block_until_kb_ready`, `usb_send_char`, `usb_send_keystroke`).
+- [x] **4.2. Protección de recarga en caliente (Hot-Reload) de configuración y cachés**
+  - [x] Sincronizar la recarga de NVS frente al bucle de escaneo en `components/keyboard/kb_combo.c` (`kb_combo_reload` vs `kb_combo_process_key`/`kb_combo_tick`).
+  - [x] Sincronizar `kb_custom_key_reload()` frente a `find_ckey()` en `components/keyboard/kb_custom_key.c`.
+  - [x] Sincronizar `on_macros_updated()` frente a `execute_macro_cancellable()` y `kb_macro_process_action()` en `components/keyboard/kb_macro.c`.
+  - [x] Proteger `s_dram_base`, `s_dram_swap` y `s_swap_layer_idx` en `components/config_module/cfg_layouts.c` y corregir la desreferencia sin guarda de `s_psram_cache` en `cfg_layout_create()`.
+  - [x] Proteger `s_cache` en `components/status_module/statusmod.c` con spinlock (`portMUX_TYPE`) entre `sys_evt` y `comm_proc_task`.
+- [x] **4.3. Consolidación de tareas de temporización (`kb_sys_action` y `kb_tap_0..3`)**
+  - [x] Eliminar la tarea dedicada `kb_sys_action` (4 KB stack) y la condición de carrera sobre `s_trackers[]` en `components/keyboard/kb_system_action.c`, integrando `kb_system_action_poll()` al bucle determinista de `kb_manager_task` con guarda `kb_system_action_is_active()` para sleep.
+  - [x] Reemplazar el pool de 4 tareas `kb_tap_0..3` (12 KB stack) en `components/keyboard/kb_macro.c` por un planificador no bloqueante de plazos (`press_deadline_us`, `release_deadline_us`) despachado por timer o tick de `kb_manager`.
+- [x] **4.4. Optimización de memoria interna (DRAM `.bss` y Heap) y `rgb_worker`**
+  - [x] Migrar los 3 buffers estáticos de 10 KB (`s_tx_buf` en `comm_tx.c`, `s_rx_buf` en `comm_rx.c` y `s_cfg_resp_buf` en `cfgmod.c` = **30 KB de `.bss` en DRAM interna**) a asignación en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) con fallback a DRAM.
+  - [x] Cambiar `malloc(payload_len)` en `comm_send_payload()` (`comm_tx.c`) por `heap_caps_malloc` priorizando PSRAM.
+  - [x] Convertir `rgb_worker_task` (`components/rgb_module/rgb.c`) en 100 % orientado a eventos (`portMAX_DELAY` en `xQueueReceive` en lugar de despertar cada 2 s en reposo).
 
-#### 4.2. Dongle USB 2.4 GHz (variante de build del master)
-* **Hardware:** **ESP32-S3** (o S2) únicamente: el C3 no tiene USB OTG (R15).
-* **Arquitectura:** layers, macros, combos, ckeys y NVS ya viven en el *master* → el dongle es **el mismo firmware con `CONFIG_TEF_ROLE_DONGLE`**: sin matriz, sin BLE (ahorra RAM/flash), `kb_manager` consume `s_remote_matrix` de **dos** peers (hoy el flujo ya existe para uno). Las mitades pasan a ser *slaves* puros.
-* **Trabajo no trivial que v1 omitía:** `splitmod` maneja **un único** `peer_mac` → multi-peer (tabla de 2 peers, pairing con 2 mitades, TSK por par, ranuras ESP-NOW cifradas), `split_config_sync` a ambos, fijación de canal Wi-Fi, y reconexión.
-* **Métricas realistas:** ESP-NOW emite **solo ante cambios**, "1000 Hz" es el polling USB. Objetivo: matriz→host p50 ≤ 2 ms, p99 ≤ 5 ms (incluye reintentos de capa MAC), medido contra SOF USB.
-* **USB:** reutilizar `usb_module` del master (HID teclado NKRO + consumer + canal COMM/WebHID).
+#### 4.1. Sincronización y Thread-Safety en el motor de transporte (`comm_module` y `usb_module`)
+* **Diagnóstico verificado en el código:**
+  1. **Carrera en `comm_tx.c`:** El estado global de transmisión ([`s_tx_buf`, `s_tx_buf_len`, `s_tx_buf_idx`, `s_tx_awaiting_response`, `s_tx_blast_mode_flag`, `s_tx_current_target`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c#L39-L56)) es leído y escrito sin sincronización desde dos tareas distintas: `comm_tx_task` ([`comm_tx.c#L319-L371`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c#L319-L371)) y `comm_proc_task` (vía [`comm_process_tx_response()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c#L177) y el handler de timeout en [`comm_dispatch.c#L203`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_dispatch.c#L203)). Si `xSemaphoreTake(s_tx_done_sem, ...)` expira en `comm_tx_task` al mismo tiempo que llega un ACK/BITMAP en `comm_proc_task`, ambas tareas ejecutan `comm_erase_tx_buffer()` en paralelo. Además, `comm_erase_tx_buffer()` ejecuta `xSemaphoreGive(s_tx_done_sem)` incluso cuando fue llamado por el propio timeout de `comm_tx_task`.
+  2. **TinyUSB sin serialización y código peligroso en `usbmod.c`:** `tud_hid_n_report()` no es thread-safe, pero se invoca desde `kb_mgr`, `kb_macro`, `kb_tap_*`, `comm_tx_task` y `comm_proc_task`. En [`usb_send_keyboard_nkro()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/usbmod.c#L73-L79) se usa un VLA en stack (`uint8_t buf[len + 1]`) y no se comprueba `tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)` antes de llamar a TinyUSB. Asimismo, [`block_until_kb_ready()`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/usbmod.c#L90-L94) contiene un bucle infinito de espera activa (`while (!tud_hid_n_ready(...)) continue;`) que dispara el Task Watchdog si el host desconecta a mitad de llamada.
+* **Acciones:**
+  1. Proteger la máquina de estados `s_tx_*` con un mutex interno en `comm_tx.c` (o delegar las transiciones a un único hilo consumidor) y distinguir el reset por finalización externa (`comm_complete_tx_buffer` → da el semáforo) del reset por timeout local en `comm_tx_task`.
+  2. Añadir un mutex de transporte USB en `usbmod.c` (adquisición sin espera o ≤ 1 tick en la ruta `nowait` de teclado, y acotada en COMM), reemplazar el VLA por `uint8_t buf[NKRO_BYTES + 1]`, y eliminar las funciones muertas `block_until_kb_ready`, `usb_send_char` y `usb_send_keystroke`.
+* **Aceptación:** 0 errores bajo ThreadSanitizer (`--tsan`) en pruebas concurrentes de TX/RX + timeout; `idf.py build` con `-Wvla` limpio.
 
-#### 4.3. Pantalla de estado
-* **Hardware:** **SSD1306** I²C (128×32/64) y **Nice!View (Sharp LS011B7DH03, 160×68)**; *no* LS027B7DH01 (2.7", R17).
-* **Diseño:** framebuffer 1-bpp propio + `esp_lcd` (evitar LVGL por costo de RAM/flash). Refresco **orientado a eventos** (no periódico) para respetar el presupuesto de energía; Sharp requiere toggle de VCOM (~1 Hz) incluso en estático.
-* **Datos:** capa activa, batería local/remota (usa la telemetría de 3.1), perfil BLE/USB/Dongle, Caps Lock, WPM (calculado en `kb_manager`) y RTT de `split_bench`.
+#### 4.2. Protección de recarga en caliente (Hot-Reload) de configuración y cachés
+* **Diagnóstico verificado en el código:**
+  - Cuando llega un comando `SET`/`DELETE` desde el configurador o desde `split_config_sync`, los callbacks de actualización mutan tablas en RAM mientras `kb_mgr` o `kb_macro` las recorren en otro núcleo:
+    - [`kb_combo.c#L109-L127`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_combo.c#L109-L127) (`kb_combo_reload`): modifica `s_combo_count`, `s_combos` (incluyendo `qsort()`), `s_combo_rt` y `s_suppressed_count` desde la tarea de eventos mientras `kb_mgr` ejecuta `kb_combo_process_key()` y `kb_combo_tick()`.
+    - [`kb_custom_key.c#L151-L163`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_custom_key.c#L151-L163) (`kb_custom_key_reload`): reescribe `s_ckeys` y `s_ckey_count` sin exclusión mutua mientras `kb_mgr` invoca `kb_custom_key_is_tap_hold()`.
+    - [`kb_macro.c#L621-L626`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L621-L626) (`on_macros_updated`): recarga `s_macros` y hace `memset(s_rt_state, 0, ...)` desde `comm_proc_task` mientras `kb_macro` ejecuta `execute_macro_cancellable()`.
+    - [`cfg_layouts.c#L131-L160`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfg_layouts.c#L131-L160) y [`L235`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfg_layouts.c#L235): `cfg_layout_get_action_code()` muta `s_dram_swap` y `s_swap_layer_idx` sin lock frente a `layout_update_cb()`; y `cfg_layout_create()` pasa `&s_psram_cache[id]` a `cfgmod_write_storage()` sin comprobar si `s_psram_cache` es `NULL`.
+    - [`statusmod.c#L16-L30`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/status_module/statusmod.c#L16-L30): `s_cache` se actualiza tanto en `sys_evt` como en `status_module_callback()` (`comm_proc_task`) sin spinlock.
+* **Acciones:**
+  1. Diferir la recarga de `kb_combo` y `kb_custom_key` mediante flags atómicos (`_Atomic bool s_reload_pending`) consumidos de forma síncrona al inicio del ciclo de `kb_manager_task` (antes de escanear/procesar), eliminando bloqueos y carreras en la ruta crítica.
+  2. En `kb_macro.c`, encolar un comando de control de recarga en `s_macro_queue` (o proteger el acceso a `s_macros`/`s_rt_state` con mutex) para que nunca se sobrescriba una macro a mitad de ejecución.
+  3. En `cfg_layouts.c`, sincronizar el acceso al caché de capas y corregir la guarda de `s_psram_cache` en `cfg_layout_create()`.
+  4. En `statusmod.c`, proteger las lecturas y escrituras de `s_cache` con un `portMUX_TYPE` al tomar el snapshot de `send_status_push()`.
+* **Aceptación:** test multihilo (`pthread` + `--tsan`) simulando ráfagas de actualización de NVS mientras `kb_manager` / `kb_combo` / `kb_custom_key` procesan pulsaciones a 1000 Hz sin data races.
 
-#### 4.4. Sensor señalador / Trackball
-* **Driver SPI PMW3360/3389** con interrupción por pin **MOT** (en vez de polling a 500 Hz), carga de **SROM** en init y reportes por *burst read*. Requiere el pin MOT + SPI (4 pines) → **solo viable si 0.4 los asigna**.
-* **Mouse HID es trabajo nuevo (R20):** agregar el reporte en [`usb_descriptors.h`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/usb_module/include/usb_descriptors.h) **y** el *report map* BLE (cambiar el report map exige re-enumeración/re-bond en hosts que lo cachean). Si el sensor está en la mitad esclava, nuevo paquete split (con `proto_version`).
+#### 4.3. Consolidación de tareas de temporización (`kb_sys_action` y `kb_tap_0..3`)
+* **Diagnóstico verificado en el código:**
+  - [`kb_system_action.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_system_action.c) crea una tarea `kb_sys_action` (4 KB de stack) que sondea cada 10 ms (`vTaskDelay(pdMS_TO_TICKS(10))`). Además de introducir hasta 10 ms de jitter en la detección de *hold* y *single tap*, `process_action()` (llamada desde `kb_mgr`) y `kb_system_action_poll()` (llamada desde `kb_sys_action`) modifican `s_trackers[]` y `s_active_tracker_count` **sin ninguna sincronización**.
+  - [`kb_macro.c#L605-L615`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c#L605-L615) mantiene 4 tareas FreeRTOS permanentes (`kb_tap_0..3`, 12 KB de stack en total) únicamente para dormir con `vTaskDelay` entre press y release de un tap asíncrono.
+* **Acciones:**
+  1. Integrar `kb_system_action_poll()` directamente en el bucle principal de `kb_manager_task` (junto a `kb_combo_tick` y `kb_tap_hold_tick`), exponer `kb_system_action_is_active()` para mantener despierto el bucle mientras haya trackers activos (`s_active_tracker_count > 0`) y eliminar la tarea `kb_sys_action`. Resultado: 0 carreras de datos, resolución de 1 ms (en vez de 10 ms) y 1 tarea menos.
+  2. Sustituir las 4 tareas `kb_tap_0..3` por una tabla de slots de taps activos con timestamps de activación/liberación (`press_at_us`, `release_at_us`) evaluada por un único timer/worker o en el propio tick del subsistema de teclado.
+* **Aceptación:** reducción de 5 tareas FreeRTOS en el inventario del sistema; todos los tests de `test_kb_system_action` y `test_kb_report` verdes.
+
+#### 4.4. Optimización de memoria interna (DRAM `.bss` y Heap) y `rgb_worker`
+* **Diagnóstico verificado en el código:**
+  - Tres buffers estáticos de 10 240 bytes residen en la `.bss` de DRAM interna:
+    1. `s_tx_buf[MAX_TX_BUF_SIZE]` en [`comm_tx.c#L39`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c#L39) (10 KB).
+    2. `s_rx_buf[MAX_RX_BUF_SIZE]` en [`comm_rx.c#L33`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_rx.c#L33) (10 KB).
+    3. `s_cfg_resp_buf[CFG_USB_RESP_BUF_SIZE]` en [`cfgmod.c#L369`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfgmod.c#L369) (10 KB).
+  - En [`comm_tx.c#L388`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c#L388), `comm_send_payload()` reserva copias dinámicas con `malloc()` en DRAM interna.
+  - En [`rgb.c#L104`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/rgb_module/rgb.c#L104), `rgb_worker_task` tiene un timeout de 2000 ms en `xQueueReceive` que fuerza un re-cálculo y refresco RMT cada 2 segundos incluso cuando el teclado está completamente inactivo, pese a que `split_task` ya publica eventos explícitos `SPLIT_EVENT_STALE` y `SPLIT_EVENT_STALE_RECOVERED`.
+* **Acciones:**
+  1. Convertir `s_tx_buf`, `s_rx_buf` y `s_cfg_resp_buf` en punteros inicializados en `comm_tx_init()`, `comm_rx_init()` y `cfg_init()` mediante `heap_caps_malloc(..., MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` (con fallback a `MALLOC_CAP_DEFAULT`).
+  2. Usar `heap_caps_malloc` con preferencia PSRAM en `comm_send_payload()`.
+  3. Cambiar `rgb_worker_task` a espera bloqueante `portMAX_DELAY` en `xQueueReceive`, eliminando el despertar periódico de 2 s.
+* **Aceptación:** `idf.py size-components` reporta una reducción de **≥ 30 KB en `.bss` de DRAM interna** (`diram_bss`).
 
 ---
 
-### FASE 5: Ecosistema Web y Releases
+### FASE 5: Cobertura Integral de Tests, Higiene de Código y Endurecimiento de Calidad
 
-#### 5.1. Actualizador de firmware in-browser
-* **Cómo entra el chip en modo descarga (corrige el diagrama de v1):** el firmware usa **TinyUSB (OTG)**, no USB-Serial-JTAG, por lo que **no hay secuencia DTR/RTS** disponible. Flujo correcto:
-  1. El configurador envía por WebHID un comando COMM `ENTER_DOWNLOAD_MODE`; el firmware fuerza el *boot* en download (`RTC_CNTL_FORCE_DOWNLOAD_BOOT` + reset).
-  2. El S3 reaparece como dispositivo USB-Serial-JTAG de la ROM (VID `303A`); el usuario lo elige en `navigator.serial.requestPort()`.
-  3. `esptool-js` flashea (la velocidad de baudios es irrelevante sobre USB nativo). Fallback manual: BOOT+RESET.
-* **Particiones (R2):** no hardcodear `0x10000`. Hoy el *factory app* está en **`0x90000`** (2 MB). Generar un `manifest.json` desde `flasher_args.json` en CI con `{offset, file, sha256}` para bootloader, partition-table y app; el flasher lo consume.
-* **Distribución:** los *assets* de GitHub Releases **no tienen CORS** desde el navegador → publicar artefactos y manifest en **GitHub Pages** (mismo origen que el configurador) o equivalente.
-* **Seguridad de datos:** flashear **solo app** (+ bootloader/ptable si cambian); **no borrar NVS** (configuración del usuario) salvo opción explícita; ofrecer *export* de configuración antes de flashear. Comprobar versión firmware↔configurador vía handshake COMM.
-* **Evaluación de OTA (alternativa):** sin particiones OTA hoy no hay *rollback*. Pasar a `ota_0/ota_1` + `otadata` (reduciendo NVS o app) permite actualizar por USB/BLE sin modo descarga; decisión a tomar con datos de uso de flash (`idf.py size`). Si se adopta, cambia el layout y obliga a un único re-flasheo manual.
-* **Compatibilidad del navegador:** Web Serial solo en Chromium; mostrar detección y mensaje claro en Safari/Firefox.
+> **Propósito:** Cerrar las brechas de pruebas unitarias en los motores más complejos del firmware, eliminar números mágicos y código muerto, modularizar componentes monolíticos y blindar el repositorio con análisis estático y presupuestos en CI.
 
-#### 5.2. Pipeline de release
-* Sobre el CI de 0.2: en *tag* `vX.Y.Z` → build reproducible (imagen IDF fijada), `manifest.json` + binarios + `sha256` + notas de versión → publicación en Pages y GitHub Release. El configurador lee el manifest para listar versiones.
+#### Checklist de Ejecución de Fase 5:
+- [ ] **5.1. Tests unitarios para motores de teclado no cubiertos (`kb_combo`, `kb_custom_key`, `kb_macro`)**
+  - [ ] Crear `test/keyboard/test_kb_combo.c` validando combos simples, *subsumption* (subconjuntos/superconjuntos), `strict_order`, `delayed_press`, `cancel_keys`, `release_on_first_key` y expiración por `kb_combo_tick()`.
+  - [ ] Crear `test/keyboard/test_kb_custom_key.c` validando `CKEY_MODE_PRESS_RELEASE` (`press_sustain`, `wait_for_finish`) y `CKEY_MODE_MULTI_ACTION` (`hold_sustain`, `SINGLE_TAP`, `DOUBLE_TAP`, `HOLD`).
+  - [ ] Crear `test/keyboard/test_kb_macro.c` validando los 8 modos de ejecución (`ONCE_STACK_ONCE`, `ONCE_NO_STACK`, `ONCE_STACK_N`, `HOLD_REPEAT`, `HOLD_REPEAT_CANCEL`, `TOGGLE_REPEAT`, `TOGGLE_REPEAT_CANCEL`, `BURST_N`), recursión acotada (`depth <= 5`) y limpieza al cancelar (`kb_macro_force_clear`).
+- [ ] **5.2. Tests unitarios para `Blast+Reconcile` (`comm_module`), `split_role`/`split_sync` y `cfgmod`**
+  - [ ] Crear `test/comm/test_comm_blast.c` validando transacciones multipaquete `Blast+Reconcile`, reconstrucción de bitmap con pérdida simulada de paquetes `MID`, límite de rondas de reconciliación (`TX_BLAST_MAX_RECONCILE_ROUNDS`), reintentos por `NAK` y lock de sesión entre transportes.
+  - [ ] Crear `test/split/test_split_role_and_sync.c` validando todas las reglas de desempate de `split_role_on_negotiate()`, el intercambio `ROLE_SWAP_REQ`/`ACK` y la compresión/descompresión delta de matriz en `split_sync.c`.
+  - [ ] Crear `test/config/test_cfgmod.c` validando `cfgmod_handle_usb_comm()` (`GET`, `SET`, borrado con payload vacío, actualización de máscaras `mac_idx`/`cmb_idx`/`ck_idx`, validación de tamaños y `CFG_KEY_*_LIMITS`).
+- [ ] **5.3. Higiene arquitectónica, constantes de dominio y desacoplamiento (`main`, `cfgmod`, `ble_module`)**
+  - [ ] Limpiar `main/main.c` eliminando variables e includes muertos (`enum ColorSet`, headers de TinyUSB) y desacoplar los handlers de prueba del botón físico.
+  - [ ] Reemplazar literales mágicos (`64`, `32`, `120`, `15`, `16`, `256`, `8`) en `components/config_module/cfgmod.c` por constantes de dominio con `_Static_assert` de consistencia, y eliminar declaraciones `extern` duplicadas.
+  - [ ] Modularizar `components/ble_module/blemod.c` (1428 líneas) extrayendo la máquina de estados de reconexión (`RECONN_PHASE_*`) y advertising a una unidad cohesiva y testeable en host.
+- [ ] **5.4. Endurecimiento de compilación, sanitizers y guardia de memoria en CI**
+  - [ ] Habilitar flags estrictos de compilación (`-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized`) en los `CMakeLists.txt` de los componentes propios.
+  - [ ] Integrar ejecución de tests de concurrencia con `--tsan` (ThreadSanitizer) además de `--asan` en `test/run_tests.sh` y `.github/workflows/ci.yml`.
+  - [ ] Configurar guardia automática de tamaño de DRAM interna en `.github/workflows/ci.yml` verificando el reporte de `idf.py size-components`.
+
+#### 5.1. Suite de tests unitarios para motores de teclado no cubiertos (`kb_combo`, `kb_custom_key`, `kb_macro`)
+* **Diagnóstico verificado:** Aunque el subsistema `keyboard` cuenta con tests para `debounce`, `layout`, `matrix`, `report`, `state`, `system_action` y `tap_hold`, tres motores con alta densidad de estados carecen por completo de pruebas unitarias:
+  1. [`kb_combo.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_combo.c) (344 líneas): manejo de combos solapados donde un combo de 3 teclas subsume y cancela a uno de 2 teclas (`is_subset`), supresión temporal de teclas en `s_suppressed[]` para `delayed_press`, liberación retroactiva en `cancel_keys`, orden estricto (`strict_order`) y vaciado por timeout en `kb_combo_tick()`.
+  2. [`kb_custom_key.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_custom_key.c) (248 líneas): lógica de `wait_for_finish` basada en ticks restantes (`s_press_end_tick`), `press_sustain` y `hold_sustain`.
+  3. [`kb_macro.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/keyboard/kb_macro.c) (673 líneas): máquina de estados de los 8 modos de ejecución, colas de apilamiento (`pending_count`), ráfagas (`burst_remaining`), macros anidadas y cancelación sin dejar teclas virtuales pegadas en `s_v_nkro`.
+* **Aceptación:** 100 % de los modos y ramas críticas de `kb_combo`, `kb_custom_key` y `kb_macro` cubiertos en `test/keyboard/` y ejecutándose en `< 2 s` bajo `--asan`.
+
+#### 5.2. Suite de tests para `Blast+Reconcile` (`comm_module`), `split_role`/`split_sync` y `cfgmod`
+* **Diagnóstico verificado:**
+  - En `comm_module`, el motor [`comm_tx.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_tx.c) / [`comm_rx.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/comm_module/comm_rx.c) implementa el protocolo multipaquete *Blast+Reconcile*, pero `test_usb_rx.c` solo ejercita transferencias simples.
+  - En `split`, [`split_role.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_role.c) y [`split_sync.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/split/split_sync.c) carecen de tests que verifiquen la jerarquía de decisión Master/Slave y la compresión delta de matriz.
+  - En `config_module`, [`cfgmod.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfgmod.c) no tiene tests sobre su despachador binario `cfgmod_handle_usb_comm()`.
+* **Aceptación:** Nuevas suites `test_comm_blast.c`, `test_split_role_and_sync.c` y `test_cfgmod.c` integradas en `test/main.c` con 0 fallos.
+
+#### 5.3. Higiene arquitectónica, constantes de dominio y desacoplamiento (`main`, `cfgmod`, `ble_module`)
+* **Diagnóstico verificado:**
+  1. [`main/main.c#L34-L64`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/main/main.c#L34-L64): incluye cabeceras de bajo nivel de TinyUSB que pertenecen a `usb_module`, define un `enum ColorSet current_color` sin usar y mantiene callbacks `single_press_test`/`double_press_test`/`hold_press_test` con nombres de prototipo.
+  2. [`cfgmod.c#L33-L34`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfgmod.c#L33-L34) y [`L127-L243`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/config_module/cfgmod.c#L127-L243): declara dos veces `extern void cfg_ble_init(void);` y repite literales mágicos (`64`, `32`, `120`, `15`, `16`, `256`, `8`) que pueden desincronizarse si cambian las cotas en las cabeceras.
+  3. [`blemod.c`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/components/ble_module/blemod.c): concentra 1428 líneas mezclando GAP, GATT, bonding y la máquina de estados de reconexión (`RECONN_PHASE_SELECTED`, `RECONN_PHASE_FOREVER`, `RECONN_PHASE_FINITE`).
+* **Acciones:**
+  1. Limpiar `main/main.c` y formalizar los handlers del botón de sistema.
+  2. Sustituir todos los literales mágicos en `cfgmod.c` por `CFG_MACROS_MAX_COUNT`, `CFG_COMBOS_MAX_COUNT`, `CFG_CKEYS_MAX_COUNT`, `CFG_LAYOUT_MAX_COUNT`, etc., añadiendo `_Static_assert` sobre los tamaños de las máscaras de bits.
+  3. Extraer la lógica de fases de reconexión de `blemod.c` a un submódulo interno con interfaz limpia y test unitario en host.
+
+#### 5.4. Endurecimiento de compilación, sanitizers y guardia de memoria en CI
+* **Acciones:**
+  1. Añadir `-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized` en los componentes del firmware para prevenir regresiones de calidad.
+  2. Añadir un modo `bash run_tests.sh --tsan` ejecutado en `.github/workflows/ci.yml` sobre las pruebas de concurrencia.
+  3. Registrar en `implementations/baseline/BASELINE_METRICS.md` el nuevo consumo de DRAM/PSRAM tras la Fase 4 y fijar el umbral en CI.
 
 ---
 
 ## 4. Cronograma y Dependencias
 
 ```mermaid
-gantt
-    title Cronograma (estimaciones con 20% de buffer incluido)
-    dateFormat  YYYY-MM-DD
-    section Fase 0: Fundaciones
-    Sanear tests host                :f0_1, 2026-10-15, 3d
-    CI (host, build, configurator)   :f0_2, after f0_1, 2d
-    Línea base de métricas           :f0_3, after f0_1, 4d
-    Presupuesto de pines + proto_ver :f0_4, after f0_1, 3d
-    section Fase 1: Core
-    Fix sync custom keys (120)       :f1_1, after f0_2, 1d
-    Envío de reportes sin bloqueo    :f1_2, after f1_1, 4d
-    Capas atómicas                   :f1_3, after f1_2, 2d
-    Timeouts comm y tap-workers      :f1_4, after f1_3, 4d
-    ISR autónomo                     :f1_5, after f1_3, 1d
-    section Fase 2: Latencia
-    Settling parametrizable (medido) :f2_1, after f1_5, 3d
-    Eager Debounce                   :f2_2, after f2_1, 2d
-    Lectura GPIO directa             :f2_3, after f2_2, 2d
-    Tap-Hold con flavors (FW + UI)   :f2_4, after f2_2, 8d
-    section Fase 3: Energía
-    Spike de viabilidad              :f3_0, after f2_4, 3d
-    Driver de batería                :f3_1, after f3_0, 4d
-    power_mgr (DFS + light/deep)     :f3_2, after f3_1, 8d
-    section Fase 4: Hardware
-    Encoders                         :f4_1, after f3_2, 4d
-    Dongle (multi-peer)              :f4_2, after f4_1, 12d
-    Display                          :f4_3, after f4_2, 6d
-    Trackball                        :f4_4, after f4_3, 8d
-    section Fase 5: Web
-    Flasher esptool-js + manifest    :f5_1, after f3_2, 6d
-    Pipeline de release              :f5_2, after f5_1, 2d
+flowchart LR
+    subgraph Completado ["Fases 0 a 3 (Completadas)"]
+        F0["Fase 0: Fundaciones y CI"] --> F1["Fase 1: Core y Reportes"]
+        F1 --> F2["Fase 2: Latencia y Tap-Hold"]
+        F2 --> F3["Fase 3: Gestión de Energía"]
+    end
+
+    subgraph Calidad ["Fase 4: Concurrencia y DRAM"]
+        F4_1["4.1 Thread-safety COMM y USB"] --> F4_2["4.2 Hot-Reload seguro"]
+        F4_2 --> F4_3["4.3 Consolidar tareas (sys_action / tap)"]
+        F4_3 --> F4_4["4.4 Liberar 30 KB DRAM (.bss a PSRAM)"]
+    end
+
+    subgraph Robustez ["Fase 5: Tests e Higiene"]
+        F5_1["5.1 Tests kb_combo / ckey / macro"] --> F5_2["5.2 Tests Blast+Reconcile / split / cfgmod"]
+        F5_2 --> F5_3["5.3 Higiene main / cfgmod / blemod"]
+        F5_3 --> F5_4["5.4 Flags estrictos + TSan en CI"]
+    end
+
+    F3 --> F4_1
+    F4_4 --> F5_1
 ```
 
-* La Fase 5 puede avanzar **en paralelo a la Fase 4** (solo depende del CI y de la estabilidad de la Fase 3).
-* Si 3.0 resulta negativo, 3.2 se reduce a DFS y se libera tiempo para 4.x.
+* Las subfases **5.1 y 5.2** (ampliación de cobertura de tests unitarios) validan directamente los invariantes de las estructuras saneadas en **4.1–4.3**.
 
 ---
 
@@ -428,54 +498,45 @@ gantt
 
 | Riesgo | Prob. | Impacto | Mitigación |
 |---|---|---|---|
-| Light sleep incompatible con BLE+ESP-NOW de baja latencia | Alta | Alto | Spike 3.0 como gate; fallback a DFS/tickless |
+| Light sleep incompatible con BLE+ESP-NOW de baja latencia | Alta | Alto | Spike 3.0 como gate; fallback a DFS/tickless (`CONFIG_TEF_POWER_MGR`) |
 | Settling reducido causa *ghosting*/*misses* | Media | Alto | Kconfig + banco de estrés + rollback inmediato |
 | Eager debounce expone EMI | Media | Medio | `press_confirm_scans` configurable |
-| DRAM interna agotada al añadir features | Media | Alto | Guardia de CI con `size-components`; mover buffers a PSRAM |
-| Falta de pin ADC / pines para periféricos | **Alta** | Alto | Decisión de hardware en 0.4 antes de codificar |
-| Cambio de report map BLE obliga a re-bond | Media | Medio | Aviso en el configurador; ventana de migración |
-| Flasheo con layout sin OTA bloquea el teclado | Baja | Alto | ROM bootloader siempre recuperable; manifest con sha256; export de config |
+| Deadlock al introducir mutexes en `comm_tx` o `usbmod` | Baja | Alto | Orden estricto de adquisición de locks; no llamar callbacks externos con el lock tomado; validación con `--tsan` |
+| Accesos a PSRAM con caché SPI deshabilitada (durante escritura NVS) | Baja | Alto | Solo mover buffers de aplicación (`s_tx_buf`, `s_rx_buf`, `s_cfg_resp_buf`) a PSRAM; mantener stacks de tareas que escriben en NVS (`split`, `comm_proc_task`) en DRAM interna |
+| Regresión en tiempos de respuesta de `kb_system_action` al eliminar su tarea | Baja | Medio | Ejecutar `kb_system_action_poll()` en cada ciclo activo de `kb_manager` (1 ms vs 10 ms previos) e incluir `kb_system_action_is_active()` en la condición de espera |
 
 ---
 
 ## 6. Definition of Done (por fase)
 
-1. `bash test/run_tests.sh` → 0 fallos (incluye `--asan`); nuevos tests para cada cambio.
-2. `idf.py build` sin warnings nuevos; `size-components` sin regresión de DRAM libre.
-3. Configurador: `npm run lint && npm run build` verdes si hay cambios de esquema.
-4. Métrica asociada **medida** y registrada en `implementations/baseline/`.
-5. Documentación actualizada: `*_MODULE.md` del componente y, si cambia la arquitectura, `universe/modules/`. Cambios de esquema/protocolo reflejados en [`COMM_PROTOCOL.md`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/COMM_PROTOCOL.md).
-6. Commits atómicos en `firmware-evolution`; Kconfig de rollback documentado.
+1. `bash test/run_tests.sh --asan` y `bash test/run_tests.sh --tsan` → 0 fallos; nuevos tests unitarios para cada módulo intervenido.
+2. `idf.py build` sin warnings nuevos (con `-Wall -Wextra -Wvla`); `size-components` confirmando la reducción de DRAM interna.
+3. Configurador: `npm run lint && npm run build` verdes.
+4. Métrica asociada **medida** y actualizada en [`implementations/baseline/BASELINE_METRICS.md`](file:///home/srleg/Projects/Tecleados-ESP-Firmware/implementations/baseline/BASELINE_METRICS.md).
+5. Documentación actualizada: `*_MODULE.md` del componente correspondiente en `components/` (y `universe/modules/` solo si cambia la relación arquitectónica entre módulos).
+6. Commits atómicos y reversibles en `firmware-evolution`.
 
 ---
 
 ## 7. Matriz de Validación y Criterios de Aceptación
 
-| Métrica | Línea base (a medir en 0.3) | Objetivo | Método |
+| Métrica | Línea base (Fase 0.3) | Objetivo | Método |
 |---|---|---|---|
 | **Latencia interna de pulsación** (matriz → pin debug) | ~4–5 ms (debounce 5 scans) | **p99 < 1.2 ms** | Analizador lógico: interruptor ↔ pin debug |
-| **Latencia a USB** | medir | p99 < 2.5 ms (SOF 1 ms) | Interruptor ↔ SOF |
 | **CPU del core de scan con teclas activas** | ~36 % (20 µs × 18) | **< 15 %** | `vTaskGetRunTimeStats` |
 | **Bloqueo del scan loop por transporte caído** | hasta 100 ms | **< 1 período de scan** (p99 < 2×) | Histograma en `kb_macro_send_report` |
 | **Teclas pegadas tras fallo de reporte** | posible hasta keepalive | **0** (reintento por `s_report_pending`) | Test host + HW con USB desconectado |
-| **Sync custom keys split** | 64 / 120 | **120 / 120** + `push_all` < 10 s | Checksum NVS en esclavo |
-| **Autonomía/consumo (inalámbrico idle)** | medir con PPK2 | Definido tras spike 3.0 (hipótesis 1.5–2.5 mA light sleep) | PPK2 |
-| **Latencia 1ª pulsación desde Light Sleep** | n/a | Definido tras spike 3.0 (< 10 ms deseable) | Analizador lógico |
-| **Reporte de batería** | `0xFF` | **0–100 % monótono**, error < ±5 % vs. descarga real | Descarga completa con datalogger |
-| **Latencia inalámbrica con Dongle** | BLE 8–15 ms | **p50 ≤ 2 ms, p99 ≤ 5 ms** | Interruptor ↔ SOF USB del dongle |
-| **Tests en host** | No compila | **100 % pasando** en CI | `run_tests.sh` + GitHub Actions |
-| **Flasher web** | n/a | Flasheo OK desde Chrome sin NVS borrado; sha256 verificado | Prueba en 3 SO |
+| **Sync custom keys split** | 64 / 120 | **120 / 120** + `push_all` < 10 s | Test unitario + Checksum NVS en esclavo |
+| **Memoria DRAM interna libre (`.bss` liberada)** | `s_tx_buf` + `s_rx_buf` + `s_cfg_resp_buf` = 30 KB en DRAM | **≥ 30 KB liberados** de `.bss` interna hacia PSRAM | `idf.py size-components` |
+| **Tareas FreeRTOS de temporización redundantes** | `comm_timeout_task` + `kb_sys_action` + 4×`kb_tap` (6 tareas) | **Eliminadas / consolidadas** en timers o bucle de `kb_mgr` | Inventario en `BASELINE_METRICS.md` |
+| **Condiciones de carrera (Data Races)** | Carreras en `comm_tx`, `kb_sys_action`, hot-reload NVS y `statusmod` | **0 data races** reportados | Suite multihilo con `ThreadSanitizer (--tsan)` |
+| **Cobertura de tests unitarios en host** | Sin tests para `kb_combo`, `kb_custom_key`, `kb_macro`, `Blast+Reconcile`, `split_role`, `cfgmod` | **100 % de los motores core cubiertos y pasando** en CI | `run_tests.sh --asan` + GitHub Actions |
 
 ---
 
 ## 8. Siguientes Pasos Inmediatos
 
-1. Aprobar esta versión del plan (en particular: **decisiones abiertas** abajo).
-2. Ejecutar **Fase 0** completa; el primer commit de código funcional es el fix de custom keys (1.1) apenas el CI esté verde.
-3. Mantener los cambios en commits atómicos dentro de `firmware-evolution`.
-
-### Decisiones abiertas para el equipo
-* **Hardware:** ¿qué pin/estrategia para la batería (columna sacrificada, fuel-gauge I²C o revisión de PCB)? ¿PSRAM Quad u Octal (define GPIO33–37)?
-* **Flash layout:** ¿migrar a OTA A/B (afecta NVS/app de 2 MB) o mantener `factory` + flasher in-browser?
-* **Dongle:** ¿se acepta que sea una variante del master (recomendado) o se prefiere un firmware independiente?
-* **Alcance Fase 4:** ¿display y trackball son requisito de producto o *nice-to-have* (pueden quedar fuera del primer release)?
+1. **Iniciar Fase 4.1:** Sanear la concurrencia en `comm_tx.c` y `usbmod.c` (mutex de estado TX, serialización de TinyUSB, eliminación de VLA y funciones obsoletas).
+2. **Continuar con Fase 4.2 y 4.3:** Proteger la recarga en caliente de `kb_combo`, `kb_custom_key`, `kb_macro`, `cfg_layouts` y `statusmod`, e integrar `kb_system_action_poll()` y los tap-workers al flujo determinista sin tareas ociosas.
+3. **Ejecutar Fase 4.4:** Migrar los buffers de 10 KB (`s_tx_buf`, `s_rx_buf`, `s_cfg_resp_buf`) a PSRAM y verificar la ganancia con `idf.py size-components`.
+4. **Completar Fase 5:** Agregar las suites de tests unitarios faltantes (`kb_combo`, `kb_custom_key`, `kb_macro`, `comm_blast`, `split_role_and_sync`, `cfgmod`), limpiar `main.c`/`cfgmod.c`/`blemod.c` y activar los checks estrictos en CI.
