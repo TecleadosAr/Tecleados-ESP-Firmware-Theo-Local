@@ -6,10 +6,6 @@
 
 #include "tinyusb.h"
 
-// test stuff
-void usb_send_char(char c);
-void usb_send_keystroke(uint8_t hid_keycode);
-
 // real stuff
 bool usb_keyboard_use_boot_protocol(void);
 bool usb_send_keyboard_6kro(uint8_t modifier, const uint8_t keycodes[6]);

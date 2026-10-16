@@ -64,13 +64,18 @@ typedef struct {
 #define TX_QUEUE_LENGTH 16
 static QueueHandle_t s_tx_queue = NULL;
 static SemaphoreHandle_t s_tx_done_sem = NULL;
+static SemaphoreHandle_t s_tx_mutex = NULL;
 
 static bool tx_send_next_packet(void);
 static bool tx_blast_send_all_mid_packets(void);
 static bool tx_send_packet_by_index(uint16_t index);
+static void erase_tx_buffer_locked(bool give_sem);
 
 bool comm_tx_blast_active(void) {
-    return s_tx_blast_mode_flag;
+    if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    bool active = s_tx_blast_mode_flag;
+    if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
+    return active;
 }
 
 void comm_tx_blast_handle_bitmap(const uint8_t *packet, uint16_t len) {
@@ -83,7 +88,7 @@ void comm_tx_blast_handle_bitmap(const uint8_t *packet, uint16_t len) {
     if (s_tx_blast_reconcile_attempts > TX_BLAST_MAX_RECONCILE_ROUNDS) {
         ESP_LOGE(TAG, "Blast: max reconcile attempts reached. Aborting.");
         comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-        comm_erase_tx_buffer();
+        erase_tx_buffer_locked(true);
         return;
     }
 
@@ -118,7 +123,7 @@ void comm_tx_blast_handle_bitmap(const uint8_t *packet, uint16_t len) {
     if (any_retransmit_failed) {
         ESP_LOGE(TAG, "Blast: retransmit failed. Aborting.");
         comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-        comm_erase_tx_buffer();
+        erase_tx_buffer_locked(true);
         return;
     }
 
@@ -126,7 +131,7 @@ void comm_tx_blast_handle_bitmap(const uint8_t *packet, uint16_t len) {
         if (!tx_send_packet_by_index(s_tx_blast_total_packets - 1)) {
             ESP_LOGE(TAG, "Blast: failed to send LAST packet. Aborting.");
             comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-            comm_erase_tx_buffer();
+            erase_tx_buffer_locked(true);
             return;
         }
         s_tx_awaiting_response = true;
@@ -175,13 +180,17 @@ static bool tx_blast_send_all_mid_packets(void) {
 }
 
 void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, uint16_t len) {
+    if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+
     if (source != s_tx_current_target) {
         ESP_LOGE(TAG, "Received TX response from unexpected transport %d (flags=0x%02X)", source, packet[0]);
+        if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
         return;
     }
 
     if (!s_tx_awaiting_response) {
         ESP_LOGE(TAG, "Received unexpected TX response. (flags=0x%02X)", packet[0]);
+        if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
         return;
     }
 
@@ -191,6 +200,7 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
     if (header->flags == PAYLOAD_FLAG_BITMAP) {
         handled = true;
         comm_tx_blast_handle_bitmap(packet, len);
+        if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
         return;
     }
 
@@ -199,19 +209,22 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
         if (s_tx_blast_mode_flag && s_tx_blast_reconcile_attempts == 0) {
             if (!tx_blast_send_all_mid_packets()) {
                 comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-                comm_erase_tx_buffer();
+                erase_tx_buffer_locked(true);
+                if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
                 return;
             }
             comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_STATUS_REQ, 0, 0, NULL);
             s_tx_last_packet_timestamp_us = esp_timer_get_time();
             s_tx_awaiting_response = true;
+            if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
             return;
         }
 
         if (s_tx_blast_mode_flag && (header->flags & PAYLOAD_FLAG_OK)) {
             float time_ms = (esp_timer_get_time() - s_tx_blast_start_time_us) / 1000.0f;
             ESP_LOGI(TAG, "[Blast TX] Transaction complete: %u packets, %u bytes in %.1f ms", s_tx_blast_total_packets, s_tx_buf_len, time_ms);
-            comm_erase_tx_buffer();
+            erase_tx_buffer_locked(true);
+            if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
             return;
         }
 
@@ -219,14 +232,15 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
             if (s_tx_buf_idx < s_tx_buf_len) {
                 if (!tx_send_next_packet()) {
                     comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-                    comm_erase_tx_buffer();
+                    erase_tx_buffer_locked(true);
+                    if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
                     return;
                 }
                 s_tx_awaiting_response = true;
             } else {
                 if (header->flags & PAYLOAD_FLAG_OK) {
                     ESP_LOGI(TAG, "[Single TX] Transaction complete: 1 packet, %u bytes", s_tx_buf_len);
-                    comm_erase_tx_buffer();
+                    erase_tx_buffer_locked(true);
                 } else {
                     s_tx_awaiting_response = true;
                 }
@@ -238,30 +252,33 @@ void comm_process_tx_response(comm_transport_t source, const uint8_t *packet, ui
         handled = true;
         if (++s_tx_nak_resend_attempts >= TX_NAK_RESEND_MAX_ATTEMPTS) {
             comm_build_send_single_packet(s_tx_current_target, PAYLOAD_FLAG_ABORT, 0, 0, NULL);
-            comm_erase_tx_buffer();
+            erase_tx_buffer_locked(true);
+            if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
             return;
         }
 
         if (s_tx_blast_mode_flag) {
-            if (!tx_send_packet_by_index(0)) comm_erase_tx_buffer();
+            if (!tx_send_packet_by_index(0)) erase_tx_buffer_locked(true);
         } else {
             s_tx_buf_idx = s_tx_buf_last_packet_sent_idx;
-            if (!tx_send_next_packet()) comm_erase_tx_buffer();
+            if (!tx_send_next_packet()) erase_tx_buffer_locked(true);
         }
     }
 
     if (header->flags & (PAYLOAD_FLAG_OK | PAYLOAD_FLAG_ERR | PAYLOAD_FLAG_ABORT)) {
         handled = true;
-        comm_erase_tx_buffer();
+        erase_tx_buffer_locked(true);
     }
 
     if (!handled) {
         ESP_LOGE(TAG, "Unhandled TX response flag.");
-        comm_erase_tx_buffer();
+        erase_tx_buffer_locked(true);
     }
+
+    if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
 }
 
-void comm_erase_tx_buffer(void) {
+static void erase_tx_buffer_locked(bool give_sem) {
     s_tx_buf_len = 0;
     s_tx_buf_idx = 0;
     s_tx_buf_last_packet_sent_idx = 0;
@@ -277,13 +294,22 @@ void comm_erase_tx_buffer(void) {
     comm_session_unlock();
     s_tx_current_target = COMM_TRANSPORT_NONE;
 
-    if (s_tx_done_sem != NULL) {
+    if (give_sem && s_tx_done_sem != NULL) {
         xSemaphoreGive(s_tx_done_sem);
     }
 }
 
+void comm_erase_tx_buffer(void) {
+    if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    erase_tx_buffer_locked(true);
+    if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
+}
+
 uint64_t comm_tx_get_last_packet_timestamp_us(void) {
-    return s_tx_last_packet_timestamp_us;
+    if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    uint64_t ts = s_tx_last_packet_timestamp_us;
+    if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
+    return ts;
 }
 
 static bool tx_send_next_packet(void) {
@@ -324,6 +350,8 @@ static void comm_tx_task(void *pvParameters) {
             // Clear any stale semaphore BEFORE starting a new transmission
             xSemaphoreTake(s_tx_done_sem, 0);
 
+            if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+
             s_tx_current_target = item.target;
             uint16_t current_mtu = tx_get_max_payload_len();
             uint16_t total_packets = (item.len + current_mtu - 1) / current_mtu;
@@ -334,6 +362,7 @@ static void comm_tx_task(void *pvParameters) {
                         ESP_LOGE(TAG, "Failed to acquire session lock for blast TX to transport %d", item.target);
                         free(item.data);
                         s_tx_current_target = COMM_TRANSPORT_NONE;
+                        if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
                         continue;
                     }
                 }
@@ -343,28 +372,34 @@ static void comm_tx_task(void *pvParameters) {
             s_tx_buf_len = item.len;
             free(item.data);
 
+            bool send_ok = false;
             if (total_packets > 1) {
                 s_tx_blast_mode_flag = true;
                 s_tx_blast_total_packets = total_packets;
                 s_tx_blast_max_payload_len = current_mtu;
                 s_tx_blast_reconcile_attempts = 0;
                 s_tx_blast_start_time_us = esp_timer_get_time();
-                if (!tx_send_packet_by_index(0)) {
-                    comm_erase_tx_buffer();
-                    continue;
-                }
+                send_ok = tx_send_packet_by_index(0);
             } else {
-                if (!tx_send_next_packet()) {
-                    comm_erase_tx_buffer();
-                    continue;
-                }
+                send_ok = tx_send_next_packet();
+            }
+
+            if (!send_ok) {
+                erase_tx_buffer_locked(false);
+                if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
+                continue;
             }
 
             s_tx_awaiting_response = true;
+            if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
 
             if (xSemaphoreTake(s_tx_done_sem, pdMS_TO_TICKS(TX_TIMEOUT_MS)) != pdTRUE) {
                 ESP_LOGW(TAG, "TX timeout waiting for response. (No configurator connected?)");
-                comm_erase_tx_buffer();
+                if (s_tx_mutex) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+                if (s_tx_current_target != COMM_TRANSPORT_NONE || s_tx_buf_len > 0) {
+                    erase_tx_buffer_locked(false);
+                }
+                if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
             }
         }
     }
@@ -400,6 +435,9 @@ bool comm_send_payload(comm_transport_t target, const uint8_t *payload, uint16_t
 }
 
 void comm_tx_init(void) {
+    if (!s_tx_mutex) {
+        s_tx_mutex = xSemaphoreCreateMutex();
+    }
     s_tx_queue = xQueueCreate(TX_QUEUE_LENGTH, sizeof(tx_queue_item_t));
     s_tx_done_sem = xSemaphoreCreateBinary();
     xTaskCreateWithCaps(comm_tx_task, "comm_tx_task", 4096, NULL, 10, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

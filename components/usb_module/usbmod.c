@@ -17,9 +17,12 @@
 
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
-#include "tusb.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #define TAG "USBModule"
+
+static SemaphoreHandle_t s_usb_hid_mutex = NULL;
 
 // ============ USB STATE CALLBACKS ============
 
@@ -66,67 +69,70 @@ bool usb_keyboard_use_boot_protocol(void) {
 }
 
 bool usb_send_keyboard_6kro(uint8_t modifier, const uint8_t keycodes[6]) {
-  return tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD,
+  if (!tud_mounted()) {
+    return false;
+  }
+  if (s_usb_hid_mutex) {
+    if (xSemaphoreTake(s_usb_hid_mutex, pdMS_TO_TICKS(1)) != pdTRUE) {
+      return false;
+    }
+  }
+  bool res = false;
+  if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
+    res = tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD,
                                    modifier, keycodes);
+  }
+  if (s_usb_hid_mutex) {
+    xSemaphoreGive(s_usb_hid_mutex);
+  }
+  return res;
 }
 
 bool usb_send_keyboard_nkro(uint8_t modifier, const uint8_t *bitmap,
                              uint16_t len) {
-  uint8_t buf[len + 1];
+  if (!tud_mounted()) {
+    return false;
+  }
+  if (len > NKRO_BYTES) {
+    len = NKRO_BYTES;
+  }
+  uint8_t buf[NKRO_BYTES + 1];
   buf[0] = modifier;
   memcpy(buf + 1, bitmap, len);
-  return tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_NKRO, buf, len + 1);
+
+  if (s_usb_hid_mutex) {
+    if (xSemaphoreTake(s_usb_hid_mutex, pdMS_TO_TICKS(1)) != pdTRUE) {
+      return false;
+    }
+  }
+  bool res = false;
+  if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
+    res = tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_NKRO, buf, len + 1);
+  }
+  if (s_usb_hid_mutex) {
+    xSemaphoreGive(s_usb_hid_mutex);
+  }
+  return res;
 }
 
 bool usb_send_consumer_report(uint16_t keycode) {
+  if (!tud_mounted()) {
+    return false;
+  }
+  if (s_usb_hid_mutex) {
+    if (xSemaphoreTake(s_usb_hid_mutex, pdMS_TO_TICKS(1)) != pdTRUE) {
+      return false;
+    }
+  }
+  bool res = false;
   if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_KBD)) {
-    return tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_CONSUMER, &keycode, 2);
+    res = tud_hid_n_report(ITF_NUM_HID_KBD, REPORT_ID_CONSUMER, &keycode, 2);
   }
-  return false;
-}
-
-// Test functions
-
-static void block_until_kb_ready() {
-  while (!tud_hid_n_ready(ITF_NUM_HID_KBD)) {
-    continue;
+  if (s_usb_hid_mutex) {
+    xSemaphoreGive(s_usb_hid_mutex);
   }
+  return res;
 }
-
-void usb_send_char(char c) {
-  uint8_t const conv_table[128][2] = {HID_ASCII_TO_KEYCODE};
-  uint8_t uichar = (uint8_t)c;
-  if (uichar >= 128)
-    return;
-
-  uint8_t kc = conv_table[uichar][1];
-  if (kc == 0)
-    return;
-
-  uint8_t mod = conv_table[uichar][0] ? KEYBOARD_MODIFIER_LEFTSHIFT : 0;
-  uint8_t keys[6] = {kc};
-
-  if (tud_mounted()) {
-    tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD, mod, keys);
-    block_until_kb_ready();
-    uint8_t no_keys[6] = {0};
-    tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD, 0, no_keys);
-  }
-}
-
-void usb_send_keystroke(uint8_t hid_keycode) {
-  if (tud_mounted()) {
-    uint8_t keycode[6] = {hid_keycode};
-    tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD, 0,
-                              keycode); // Press
-    block_until_kb_ready();
-    uint8_t no_keys[6] = {0};
-    tud_hid_n_keyboard_report(ITF_NUM_HID_KBD, REPORT_ID_KEYBOARD, 0,
-                              no_keys); // Release
-    ESP_LOGI(TAG, "Sent keystroke");
-  }
-}
-
 
 /*
     Main USB module
@@ -134,21 +140,35 @@ void usb_send_keystroke(uint8_t hid_keycode) {
 
 // Transport operations for comm_module
 static bool usbmod_send_packet(const uint8_t *packet, uint16_t len) {
-    if (!tud_mounted() || !tud_hid_n_ready(ITF_NUM_HID_COMM)) {
+    if (!tud_mounted()) {
         return false;
     }
     
     // USB HID requires reports to strictly match the descriptor size.
     // The COMM report descriptor specifies 63 bytes payload (plus 1 byte report ID = 64 bytes total).
     uint16_t required_len = COMM_REPORT_SIZE; // 63
-    uint8_t padded_buf[63] = {0};
+    uint8_t padded_buf[COMM_REPORT_SIZE] = {0};
     
     if (len > required_len) {
         len = required_len;
     }
     memcpy(padded_buf, packet, len);
-    
-    return tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, padded_buf, required_len);
+
+    if (s_usb_hid_mutex) {
+        if (xSemaphoreTake(s_usb_hid_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+            return false;
+        }
+    }
+
+    bool res = false;
+    if (tud_mounted() && tud_hid_n_ready(ITF_NUM_HID_COMM)) {
+        res = tud_hid_n_report(ITF_NUM_HID_COMM, REPORT_ID_COMM, padded_buf, required_len);
+    }
+
+    if (s_usb_hid_mutex) {
+        xSemaphoreGive(s_usb_hid_mutex);
+    }
+    return res;
 }
 
 static bool usbmod_is_ready(void) {
@@ -169,7 +189,6 @@ static const comm_transport_ops_t s_usb_ops = {
 void usb_task(void *arg) {
   while (1) {
     tud_task();
-    taskYIELD();
   }
 }
 
@@ -183,6 +202,9 @@ static char const *string_desc_arr[] = {
 };
 
 void usb_init() {
+  if (!s_usb_hid_mutex) {
+    s_usb_hid_mutex = xSemaphoreCreateMutex();
+  }
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
   tusb_cfg.descriptor.device = &desc_device;
   tusb_cfg.descriptor.full_speed_config = desc_configuration;
