@@ -13,6 +13,7 @@
 #include "basic_utils.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -36,12 +37,23 @@ static inline uint16_t tx_get_max_payload_len(void) {
 // Replaced macro with direct function calls
 
 // ============ TX State & Buffer ============
-static uint8_t s_tx_buf[MAX_TX_BUF_SIZE] __attribute__((aligned(8))) = {0};
+static uint8_t *s_tx_buf = NULL;
 static uint16_t s_tx_buf_len = 0;
 static uint16_t s_tx_buf_idx = 0;
 static uint16_t s_tx_buf_last_packet_sent_idx = 0;
 static uint64_t s_tx_last_packet_timestamp_us = 0; 
 static bool s_tx_awaiting_response = false;
+
+static inline bool ensure_tx_buf_allocated(void) {
+    if (!s_tx_buf) {
+        s_tx_buf = heap_caps_malloc(MAX_TX_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_tx_buf) {
+            ESP_LOGW(TAG, "PSRAM allocation failed for s_tx_buf, falling back to internal RAM");
+            s_tx_buf = heap_caps_malloc(MAX_TX_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+    }
+    return s_tx_buf != NULL;
+}
 
 #define TX_NAK_RESEND_MAX_ATTEMPTS 3
 static uint8_t s_tx_nak_resend_attempts = 0;
@@ -368,6 +380,14 @@ static void comm_tx_task(void *pvParameters) {
                 }
             }
 
+            if (!ensure_tx_buf_allocated()) {
+                ESP_LOGE(TAG, "Failed to allocate s_tx_buf");
+                free(item.data);
+                s_tx_current_target = COMM_TRANSPORT_NONE;
+                if (s_tx_mutex) xSemaphoreGive(s_tx_mutex);
+                continue;
+            }
+
             memcpy(s_tx_buf, item.data, item.len);
             s_tx_buf_len = item.len;
             free(item.data);
@@ -420,7 +440,10 @@ bool comm_send_payload(comm_transport_t target, const uint8_t *payload, uint16_t
         return any;
     }
 
-    uint8_t *copy = (uint8_t *)malloc(payload_len);
+    uint8_t *copy = (uint8_t *)heap_caps_malloc(payload_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!copy) {
+        copy = (uint8_t *)malloc(payload_len);
+    }
     if (!copy) return false;
     memcpy(copy, payload, payload_len);
 
@@ -438,6 +461,7 @@ void comm_tx_init(void) {
     if (!s_tx_mutex) {
         s_tx_mutex = xSemaphoreCreateMutex();
     }
+    ensure_tx_buf_allocated();
     s_tx_queue = xQueueCreate(TX_QUEUE_LENGTH, sizeof(tx_queue_item_t));
     s_tx_done_sem = xSemaphoreCreateBinary();
     xTaskCreateWithCaps(comm_tx_task, "comm_tx_task", 4096, NULL, 10, NULL, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

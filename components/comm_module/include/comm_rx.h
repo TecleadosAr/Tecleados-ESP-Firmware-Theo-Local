@@ -9,6 +9,7 @@
 #define RX_BLAST_BITMAP_BYTES 48
 #define RX_BLAST_MAX_PACKETS (RX_BLAST_BITMAP_BYTES * 8)
 
+void comm_rx_init(void);
 void comm_process_rx_request(comm_transport_t source, const uint8_t *packet, uint16_t len);
 void comm_erase_rx_buffer(void);
 uint64_t comm_rx_get_last_packet_timestamp_us(void);

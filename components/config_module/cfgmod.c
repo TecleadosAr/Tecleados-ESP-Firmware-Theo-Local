@@ -366,12 +366,29 @@ bool cfg_is_init(void) { return s_init; }
 
 #define CFG_USB_RESP_BUF_SIZE 10240
 
-static uint8_t s_cfg_resp_buf[CFG_USB_RESP_BUF_SIZE] __attribute__((aligned(8)));
+static uint8_t *s_cfg_resp_buf = NULL;
 static SemaphoreHandle_t s_cfg_resp_mutex = NULL;
+
+static inline bool ensure_cfg_resp_buf_allocated(void) {
+    if (!s_cfg_resp_buf) {
+        s_cfg_resp_buf = heap_caps_malloc(CFG_USB_RESP_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_cfg_resp_buf) {
+            ESP_LOGW(TAG, "PSRAM allocation failed for s_cfg_resp_buf, falling back to internal RAM");
+            s_cfg_resp_buf = heap_caps_malloc(CFG_USB_RESP_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+    }
+    return s_cfg_resp_buf != NULL;
+}
 
 bool cfg_usb_callback(comm_transport_t source, uint8_t *data, uint16_t data_len) {
     if (!s_cfg_resp_mutex || xSemaphoreTake(s_cfg_resp_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         ESP_LOGE(TAG, "cfg_usb_callback failed to acquire mutex");
+        return false;
+    }
+
+    if (!ensure_cfg_resp_buf_allocated()) {
+        ESP_LOGE(TAG, "cfg_usb_callback failed to allocate response buffer");
+        xSemaphoreGive(s_cfg_resp_mutex);
         return false;
     }
     
@@ -391,6 +408,7 @@ esp_err_t cfg_init(void) {
   if (!s_cfg_resp_mutex) {
       s_cfg_resp_mutex = xSemaphoreCreateMutex();
   }
+  ensure_cfg_resp_buf_allocated();
 
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||

@@ -100,8 +100,8 @@ static void rgb_worker_task(void *arg)
 {
     rgb_cmd_t cmd;
     for (;;) {
-        // Wait up to 2 seconds for a command. If timeout, refresh state anyway.
-        if (xQueueReceive(s_q, &cmd, pdMS_TO_TICKS(2000))) {
+        // Block indefinitely until an RGB event/command arrives
+        if (xQueueReceive(s_q, &cmd, portMAX_DELAY)) {
             switch (cmd.type) {
                 case CMD_SET_ON:
                     s_on = cmd.u.on;
@@ -123,9 +123,6 @@ static void rgb_worker_task(void *arg)
                     rgb_sync_to_system_state();
                     break;
             }
-        } else {
-            // Periodic refresh to prevent drift or stuck LEDs
-            rgb_sync_to_system_state();
         }
     }
 }

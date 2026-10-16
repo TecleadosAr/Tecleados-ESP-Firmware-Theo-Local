@@ -9,6 +9,7 @@
 #include "comm_session.h"
 #include "basic_utils.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -30,9 +31,24 @@ static inline uint16_t rx_get_max_payload_len(void) {
 // Replaced macro with direct function calls
 
 // ============ Shared RX Buffer ============
-static uint8_t s_rx_buf[MAX_RX_BUF_SIZE] __attribute__((aligned(8))) = {0};
+static uint8_t *s_rx_buf = NULL;
 static uint16_t s_rx_buf_len = 0;
 static uint64_t s_rx_last_packet_timestamp_us = 0;
+
+static inline bool ensure_rx_buf_allocated(void) {
+    if (!s_rx_buf) {
+        s_rx_buf = heap_caps_malloc(MAX_RX_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_rx_buf) {
+            ESP_LOGW(TAG, "PSRAM allocation failed for s_rx_buf, falling back to internal RAM");
+            s_rx_buf = heap_caps_malloc(MAX_RX_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+    }
+    return s_rx_buf != NULL;
+}
+
+void comm_rx_init(void) {
+    ensure_rx_buf_allocated();
+}
 
 // ============ Blast mode state ============
 static bool s_rx_blast_mode_flag = false;
@@ -93,6 +109,11 @@ static void rx_blast_receive_packet(comm_transport_t source, const uint8_t *pack
         return;
     }
 
+    if (!ensure_rx_buf_allocated()) {
+        ESP_LOGE(TAG, "Blast: failed to allocate rx_buf");
+        return;
+    }
+
     const uint8_t *payload = packet + sizeof(comm_packet_header_t);
     memcpy(s_rx_buf + offset, payload, header->payload_len);
     s_rx_blast_payload_lens[index] = header->payload_len;
@@ -125,6 +146,14 @@ bool comm_rx_blast_commit(comm_transport_t source, const uint8_t *last_packet, u
 
     if (offset + header->payload_len > MAX_RX_BUF_SIZE) {
         ESP_LOGE(TAG, "Blast commit: LAST packet would overflow rx_buf");
+        rx_blast_reset();
+        comm_erase_rx_buffer();
+        comm_session_unlock();
+        return false;
+    }
+
+    if (!ensure_rx_buf_allocated()) {
+        ESP_LOGE(TAG, "Blast commit: failed to allocate rx_buf");
         rx_blast_reset();
         comm_erase_rx_buffer();
         comm_session_unlock();
@@ -236,7 +265,9 @@ void comm_process_rx_request(comm_transport_t source, const uint8_t *packet, uin
 }
 
 void comm_erase_rx_buffer(void) {
-    memset(s_rx_buf, 0, sizeof(s_rx_buf));
+    if (s_rx_buf) {
+        memset(s_rx_buf, 0, MAX_RX_BUF_SIZE);
+    }
     s_rx_buf_len = 0;
     s_rx_last_packet_timestamp_us = 0;
     rx_blast_reset();
@@ -248,6 +279,10 @@ uint64_t comm_rx_get_last_packet_timestamp_us(void) {
 }
 
 static bool append_payload_to_rx_buffer(const uint8_t *data, uint8_t data_len) {
+    if (!ensure_rx_buf_allocated()) {
+        ESP_LOGE(TAG, "RX BUF Error: failed to allocate buffer");
+        return false;
+    }
     if (s_rx_buf_len + data_len > MAX_RX_BUF_SIZE) {
         ESP_LOGE(TAG, "RX BUF Error: trying to append packets bigger than available space");
         return false;

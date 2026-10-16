@@ -211,6 +211,7 @@ static void comm_processing_task(void *pvParameters) {
 
 void comm_dispatch_init(void) {
     comm_tx_init();
+    comm_rx_init();
     
     s_comm_message_buffer = xMessageBufferCreate(8192);
     if (s_comm_message_buffer == NULL) {
