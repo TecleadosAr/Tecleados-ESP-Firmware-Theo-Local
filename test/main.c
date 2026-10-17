@@ -49,20 +49,17 @@
 #include "../../components/comm_module/comm_rx.c"
 #include "../../components/config_module/cfg_system.c"
 #include "../../components/config_module/cfg_macros.c"
+#include "../../components/config_module/cfg_combos.c"
+#include "../../components/config_module/cfg_custom_keys.c"
 #include "../../components/keyboard/kb_report.c"
 #include "../../components/keyboard/kb_telemetry.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
-__attribute__((weak)) void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
-    (void)action_code; (void)is_pressed;
-}
-__attribute__((weak)) bool kb_custom_key_is_tap_hold(uint16_t action_code, cfg_ckey_ma_t *out_ma) {
-    (void)action_code; (void)out_ma;
-    return false;
-}
 __attribute__((weak)) void comm_timeout_reschedule(void) {
 }
 #include "../../components/keyboard/kb_macro.c"
+#include "../../components/keyboard/kb_custom_key.c"
+#include "../../components/keyboard/kb_combo.c"
 #include "../../components/keyboard/kb_tap_hold.c"
 #include "../../components/keyboard/kb_debounce.c"
 #include "../../components/keyboard/kb_matrix_hal.c"
@@ -96,6 +93,9 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "keyboard/test_kb_debounce.c"
 #include "keyboard/test_kb_tap_hold.c"
 #include "keyboard/test_kb_system_action.c"
+#include "keyboard/test_kb_combo.c"
+#include "keyboard/test_kb_custom_key.c"
+#include "keyboard/test_kb_macro.c"
 
 /* USB / Comm tests */
 #include "usb/test_usb_crc.c"

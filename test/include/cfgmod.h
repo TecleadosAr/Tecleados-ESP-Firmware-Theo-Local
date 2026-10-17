@@ -56,7 +56,7 @@ typedef esp_err_t (*cfgmod_validate_fn)(void *in_struct);
 
 /* ---- Mock NVS storage ---- */
 
-#define MOCK_NVS_MAX_ENTRIES 32
+#define MOCK_NVS_MAX_ENTRIES 128
 #define MOCK_NVS_MAX_SIZE    8192
 
 typedef struct {
