@@ -55,3 +55,18 @@ static inline void mock_ble_state_set(uint8_t profile, bool ble_routing) {
 static inline void cfg_ble_clear_unsynced(void) {
 }
 
+void cfg_ble_init(void) {
+}
+
+esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len) {
+    (void)out_buf;
+    if (inout_len) *inout_len = 0;
+    return ESP_OK;
+}
+
+esp_err_t cfg_ble_bond_write_all(const void *data, size_t len) {
+    (void)data; (void)len;
+    return ESP_OK;
+}
+
+

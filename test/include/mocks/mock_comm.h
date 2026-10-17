@@ -23,6 +23,23 @@ static int _mock_comm_single_packet_count = 0;
 
 static comm_transport_t _mock_comm_session_active = COMM_TRANSPORT_NONE;
 
+#define MOCK_COMM_MAX_PACKETS 128
+typedef struct {
+    comm_transport_t target;
+    uint8_t flags;
+    uint16_t remaining;
+    uint8_t payload_len;
+    uint8_t payload[COMM_REPORT_SIZE];
+} mock_comm_packet_t;
+
+static mock_comm_packet_t _mock_comm_packets[MOCK_COMM_MAX_PACKETS];
+static int _mock_comm_packet_count = 0;
+
+bool comm_transport_is_connected(comm_transport_t transport) {
+    (void)transport;
+    return true;
+}
+
 static inline void mock_comm_reset(void) {
     memset(_mock_comm_callbacks, 0, sizeof(_mock_comm_callbacks));
     memset(_mock_comm_last_payload, 0, sizeof(_mock_comm_last_payload));
@@ -34,6 +51,8 @@ static inline void mock_comm_reset(void) {
     _mock_comm_last_single_len = 0;
     _mock_comm_single_packet_count = 0;
     _mock_comm_session_active = COMM_TRANSPORT_NONE;
+    _mock_comm_packet_count = 0;
+    memset(_mock_comm_packets, 0, sizeof(_mock_comm_packets));
 }
 
 void comm_register_module(comm_module_id_t module_id, comm_data_callback_t callback) {
@@ -87,7 +106,6 @@ const comm_transport_ops_t *comm_transport_get(comm_transport_t transport) {
 bool comm_build_send_single_packet(comm_transport_t target, uint8_t flags,
                                    uint16_t remaining, uint8_t payload_len,
                                    const uint8_t *payload) {
-    (void)target;
     _mock_comm_single_packet_count++;
     comm_packet_header_t hdr;
     hdr.flags = flags;
@@ -98,6 +116,18 @@ bool comm_build_send_single_packet(comm_transport_t target, uint8_t flags,
         memcpy(_mock_comm_last_single_packet + sizeof(hdr), payload, payload_len);
     }
     _mock_comm_last_single_len = sizeof(hdr) + payload_len;
+
+    if (_mock_comm_packet_count < MOCK_COMM_MAX_PACKETS) {
+        mock_comm_packet_t *p = &_mock_comm_packets[_mock_comm_packet_count++];
+        p->target = target;
+        p->flags = flags;
+        p->remaining = remaining;
+        p->payload_len = payload_len;
+        if (payload && payload_len > 0) {
+            size_t copy_len = payload_len > COMM_REPORT_SIZE ? COMM_REPORT_SIZE : payload_len;
+            memcpy(p->payload, payload, copy_len);
+        }
+    }
     return true;
 }
 

@@ -31,7 +31,6 @@ extern void cfg_macros_register(void);
 extern void cfg_system_register(void);
 extern void cfg_physical_register(void);
 extern void cfg_ble_init(void);
-extern void cfg_ble_init(void);
 
 extern esp_err_t cfg_ble_bond_read_all(void *out_buf, size_t *inout_len);
 extern esp_err_t cfg_ble_bond_write_all(const void *data, size_t len);
@@ -124,9 +123,13 @@ static const cfgmod_key_map_t s_key_map[CFG_KEY_MAX] = {
    [CFG_KEY_COMBO_SINGLE] = { CFGMOD_KIND_COMBO, NULL },
 };
 
+_Static_assert(CFG_MACROS_MAX_COUNT <= 64, "Macro count must fit in uint64_t mask");
+_Static_assert(CFG_COMBOS_MAX_COUNT <= 32, "Combo count must fit in uint32_t mask");
+_Static_assert(CFG_CKEYS_MAX_COUNT <= sizeof(((cfg_ckey_index_t *)0)->mask) * 8, "CKey count must fit in ck_idx mask");
+
 static void update_active_mask(cfgmod_kind_t kind, uint16_t id, bool active) {
     if (kind == CFGMOD_KIND_MACRO) {
-        if (id >= 64) return;
+        if (id >= CFG_MACROS_MAX_COUNT) return;
         uint64_t mask = 0;
         size_t len = sizeof(mask);
         cfgmod_read_storage(kind, "mac_idx", &mask, &len);
@@ -134,7 +137,7 @@ static void update_active_mask(cfgmod_kind_t kind, uint16_t id, bool active) {
         else mask &= ~(1ULL << id);
         cfgmod_write_storage(kind, "mac_idx", &mask, sizeof(mask));
     } else if (kind == CFGMOD_KIND_COMBO) {
-        if (id >= 32) return;
+        if (id >= CFG_COMBOS_MAX_COUNT) return;
         uint32_t mask = 0;
         size_t len = sizeof(mask);
         cfgmod_read_storage(kind, "cmb_idx", &mask, &len);
@@ -142,8 +145,8 @@ static void update_active_mask(cfgmod_kind_t kind, uint16_t id, bool active) {
         else mask &= ~(1UL << id);
         cfgmod_write_storage(kind, "cmb_idx", &mask, sizeof(mask));
     } else if (kind == CFGMOD_KIND_CKEY) {
-        if (id >= 120) return;
-        uint8_t mask[15] = {0};
+        if (id >= CFG_CKEYS_MAX_COUNT) return;
+        uint8_t mask[sizeof(((cfg_ckey_index_t *)0)->mask)] = {0};
         size_t len = sizeof(mask);
         cfgmod_read_storage(kind, "ck_idx", mask, &len);
         if (active) mask[id / 8] |= (1 << (id % 8));
@@ -167,27 +170,27 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
   // Handle LIMITS keys (required by configurator frontend)
   if (hdr.cmd == CFG_CMD_GET) {
       if (hdr.key_id == CFG_KEY_LAYOUT_LIMITS) {
-          uint8_t limit = 16; // CFG_LAYOUT_MAX_COUNT
+          uint8_t limit = CFG_LAYOUT_MAX_COUNT;
           cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
           memcpy(out, &rsp, sizeof(rsp));
-          memcpy(out + sizeof(rsp), &limit, 1);
-          *out_len = sizeof(rsp) + 1;
+          memcpy(out + sizeof(rsp), &limit, sizeof(limit));
+          *out_len = sizeof(rsp) + sizeof(limit);
           return ESP_OK;
       }
       if (hdr.key_id == CFG_KEY_MACRO_LIMITS) {
-          uint16_t limits[2] = { 64, 256 }; // maxMacros, maxEvents
+          uint16_t limits[2] = { CFG_MACROS_MAX_COUNT, CFG_MACRO_MAX_EVENTS };
           cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
           memcpy(out, &rsp, sizeof(rsp));
-          memcpy(out + sizeof(rsp), limits, 4);
-          *out_len = sizeof(rsp) + 4;
+          memcpy(out + sizeof(rsp), limits, sizeof(limits));
+          *out_len = sizeof(rsp) + sizeof(limits);
           return ESP_OK;
       }
       if (hdr.key_id == CFG_KEY_COMBO_LIMITS) {
-          uint16_t limits[2] = { 32, 8 }; // maxCombos, maxKeys
+          uint16_t limits[2] = { CFG_COMBOS_MAX_COUNT, CFG_COMBO_MAX_KEYS };
           cfgmod_rsp_header_t rsp = { .cmd = hdr.cmd, .key_id = hdr.key_id, .status = ESP_OK };
           memcpy(out, &rsp, sizeof(rsp));
-          memcpy(out + sizeof(rsp), limits, 4);
-          *out_len = sizeof(rsp) + 4;
+          memcpy(out + sizeof(rsp), limits, sizeof(limits));
+          *out_len = sizeof(rsp) + sizeof(limits);
           return ESP_OK;
       }
   }
@@ -229,16 +232,16 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
               actual_payload_len = read_len;
           } else if (rsp.status == ESP_ERR_NVS_NOT_FOUND || rsp.status == ESP_ERR_NOT_FOUND) {
               if (hdr.key_id == CFG_KEY_MACROS) {
-                  memset(out_payload, 0, 8);
-                  actual_payload_len = 8;
+                  memset(out_payload, 0, sizeof(uint64_t));
+                  actual_payload_len = sizeof(uint64_t);
                   rsp.status = ESP_OK;
               } else if (hdr.key_id == CFG_KEY_COMBOS) {
-                  memset(out_payload, 0, 4);
-                  actual_payload_len = 4;
+                  memset(out_payload, 0, sizeof(uint32_t));
+                  actual_payload_len = sizeof(uint32_t);
                   rsp.status = ESP_OK;
               } else if (hdr.key_id == CFG_KEY_CKEYS) {
-                  memset(out_payload, 0, 15);
-                  actual_payload_len = 15;
+                  memset(out_payload, 0, sizeof(((cfg_ckey_index_t *)0)->mask));
+                  actual_payload_len = sizeof(((cfg_ckey_index_t *)0)->mask);
                   rsp.status = ESP_OK;
               } else if (s_registry[kind].def_fn && s_registry[kind].struct_size <= out_payload_max) {
                   s_registry[kind].def_fn(out_payload);
@@ -248,26 +251,40 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
           }
       }
   } else if (hdr.cmd == CFG_CMD_SET) {
+      void *aligned_buf = NULL;
+      const uint8_t *effective_data_in = data_in;
+      if (data_in_len > 0 && ((uintptr_t)data_in % 4) != 0) {
+          aligned_buf = heap_caps_malloc(data_in_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+          if (!aligned_buf) aligned_buf = malloc(data_in_len);
+          if (aligned_buf) {
+              memcpy(aligned_buf, data_in, data_in_len);
+              effective_data_in = (const uint8_t *)aligned_buf;
+          }
+      }
+
       // Intercept layout commands that don't match the default size (create, rename, delete)
       if (hdr.key_id == CFG_KEY_LAYOUT_SINGLE) {
           if (hdr.item_id == 0xFFFF) {
               // Create layout: data_in contains up to 24 chars of name
               uint8_t out_id = 0;
-              rsp.status = cfg_layout_create((const char *)data_in, &out_id);
+              rsp.status = cfg_layout_create((const char *)effective_data_in, &out_id);
               if (rsp.status == ESP_OK) {
                   uint16_t id16 = out_id;
                   memcpy(out_payload, &id16, sizeof(id16));
                   actual_payload_len = sizeof(id16);
               }
+              if (aligned_buf) free(aligned_buf);
               goto end_set;
           } else if (hdr.item_id & 0x8000) {
               // Rename layout: item_id & ~0x8000 is the real id
               uint16_t id = hdr.item_id & ~0x8000;
-              rsp.status = cfg_layout_rename((uint8_t)id, (const char *)data_in);
+              rsp.status = cfg_layout_rename((uint8_t)id, (const char *)effective_data_in);
+              if (aligned_buf) free(aligned_buf);
               goto end_set;
           } else if (data_in_len == 0) {
               // Delete layout
               rsp.status = cfg_layout_delete((uint8_t)hdr.item_id);
+              if (aligned_buf) free(aligned_buf);
               goto end_set;
           }
       }
@@ -291,13 +308,13 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
               rsp.status = ESP_ERR_INVALID_SIZE;
           } else {
               if (s_registry[kind].validate_fn) {
-                  rsp.status = s_registry[kind].validate_fn((void*)data_in);
+                  rsp.status = s_registry[kind].validate_fn((void*)effective_data_in);
               }
               if (rsp.status == ESP_OK) {
                   if (s_registry[kind].set_fn) {
-                      rsp.status = s_registry[kind].set_fn(data_in);
+                      rsp.status = s_registry[kind].set_fn(effective_data_in);
                   } else {
-                      rsp.status = cfgmod_write_storage(kind, target_key, data_in, data_in_len);
+                      rsp.status = cfgmod_write_storage(kind, target_key, effective_data_in, data_in_len);
                       if (rsp.status == ESP_OK && !base_key) {
                           update_active_mask(kind, hdr.item_id, true);
                       }
@@ -305,6 +322,7 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
               }
           }
       }
+      if (aligned_buf) free(aligned_buf);
 end_set:;
   } else {
       rsp.status = ESP_ERR_INVALID_ARG;
