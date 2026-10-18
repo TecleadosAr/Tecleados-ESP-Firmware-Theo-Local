@@ -67,7 +67,7 @@ flowchart TD
 | **2** | `keyboard` (`kb_matrix`, `kb_manager`, `kb_debounce`, `kb_tap_hold`), `config_module`, `configurator` | Latencia interna < 1.2 ms (p99); resolvedor Tap-Hold con flavors | **Completada** (Medio) |
 | **3** | `power_mgr`, `battery_module` (opcional/deshabilitado sin pin), `split`, `ble_module` | Gestión unificada de frecuencia (`power_mgr`) y estados de reposo | **Completada** (Medio) |
 | **4** | `comm_module`, `usb_module`, `keyboard` (`kb_combo`, `kb_custom_key`, `kb_macro`, `kb_system_action`), `config_module`, `status_module`, `rgb_module` | Eliminar data races multi-hilo, serializar TinyUSB, liberar ≥30 KB de DRAM interna (`.bss` → PSRAM) y consolidar tareas redundantes | **Completada** (Medio) |
-| **5** | `test/` (`keyboard`, `comm`, `split`, `config`), `main/`, `cfgmod`, `ble_module`, `button_module`, CI | Cobertura unitaria de motores críticos (`kb_combo`, `kb_macro`, `kb_custom_key`, `Blast+Reconcile`, `split_role`), higiene de código y endurecimiento de compilación | **Pendiente** (Bajo-Medio) |
+| **5** | `test/` (`keyboard`, `comm`, `split`, `config`), `main/`, `cfgmod`, `ble_module`, `button_module`, CI | Cobertura unitaria de motores críticos (`kb_combo`, `kb_macro`, `kb_custom_key`, `Blast+Reconcile`, `split_role`), higiene de código y endurecimiento de compilación | **Completada** (Bajo-Medio) |
 
 ---
 
@@ -415,22 +415,22 @@ Los consumos de v1 eran hipótesis. Antes de diseñar, medir con PPK2 y validar:
 > **Propósito:** Cerrar las brechas de pruebas unitarias en los motores más complejos del firmware, eliminar números mágicos y código muerto, modularizar componentes monolíticos y blindar el repositorio con análisis estático y presupuestos en CI.
 
 #### Checklist de Ejecución de Fase 5:
-- [ ] **5.1. Tests unitarios para motores de teclado no cubiertos (`kb_combo`, `kb_custom_key`, `kb_macro`)**
-  - [ ] Crear `test/keyboard/test_kb_combo.c` validando combos simples, *subsumption* (subconjuntos/superconjuntos), `strict_order`, `delayed_press`, `cancel_keys`, `release_on_first_key` y expiración por `kb_combo_tick()`.
-  - [ ] Crear `test/keyboard/test_kb_custom_key.c` validando `CKEY_MODE_PRESS_RELEASE` (`press_sustain`, `wait_for_finish`) y `CKEY_MODE_MULTI_ACTION` (`hold_sustain`, `SINGLE_TAP`, `DOUBLE_TAP`, `HOLD`).
-  - [ ] Crear `test/keyboard/test_kb_macro.c` validando los 8 modos de ejecución (`ONCE_STACK_ONCE`, `ONCE_NO_STACK`, `ONCE_STACK_N`, `HOLD_REPEAT`, `HOLD_REPEAT_CANCEL`, `TOGGLE_REPEAT`, `TOGGLE_REPEAT_CANCEL`, `BURST_N`), recursión acotada (`depth <= 5`) y limpieza al cancelar (`kb_macro_force_clear`).
-- [ ] **5.2. Tests unitarios para `Blast+Reconcile` (`comm_module`), `split_role`/`split_sync` y `cfgmod`**
-  - [ ] Crear `test/comm/test_comm_blast.c` validando transacciones multipaquete `Blast+Reconcile`, reconstrucción de bitmap con pérdida simulada de paquetes `MID`, límite de rondas de reconciliación (`TX_BLAST_MAX_RECONCILE_ROUNDS`), reintentos por `NAK` y lock de sesión entre transportes.
-  - [ ] Crear `test/split/test_split_role_and_sync.c` validando todas las reglas de desempate de `split_role_on_negotiate()`, el intercambio `ROLE_SWAP_REQ`/`ACK` y la compresión/descompresión delta de matriz en `split_sync.c`.
-  - [ ] Crear `test/config/test_cfgmod.c` validando `cfgmod_handle_usb_comm()` (`GET`, `SET`, borrado con payload vacío, actualización de máscaras `mac_idx`/`cmb_idx`/`ck_idx`, validación de tamaños y `CFG_KEY_*_LIMITS`).
-- [ ] **5.3. Higiene arquitectónica, constantes de dominio y desacoplamiento (`main`, `cfgmod`, `ble_module`)**
-  - [ ] Limpiar `main/main.c` eliminando variables e includes muertos (`enum ColorSet`, headers de TinyUSB) y desacoplar los handlers de prueba del botón físico.
-  - [ ] Reemplazar literales mágicos (`64`, `32`, `120`, `15`, `16`, `256`, `8`) en `components/config_module/cfgmod.c` por constantes de dominio con `_Static_assert` de consistencia, y eliminar declaraciones `extern` duplicadas.
-  - [ ] Modularizar `components/ble_module/blemod.c` (1428 líneas) extrayendo la máquina de estados de reconexión (`RECONN_PHASE_*`) y advertising a una unidad cohesiva y testeable en host.
-- [ ] **5.4. Endurecimiento de compilación, sanitizers y guardia de memoria en CI**
-  - [ ] Habilitar flags estrictos de compilación (`-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized`) en los `CMakeLists.txt` de los componentes propios.
-  - [ ] Integrar ejecución de tests de concurrencia con `--tsan` (ThreadSanitizer) además de `--asan` en `test/run_tests.sh` y `.github/workflows/ci.yml`.
-  - [ ] Configurar guardia automática de tamaño de DRAM interna en `.github/workflows/ci.yml` verificando el reporte de `idf.py size-components`.
+- [x] **5.1. Tests unitarios para motores de teclado no cubiertos (`kb_combo`, `kb_custom_key`, `kb_macro`)**
+  - [x] Crear `test/keyboard/test_kb_combo.c` validando combos simples, *subsumption* (subconjuntos/superconjuntos), `strict_order`, `delayed_press`, `cancel_keys`, `release_on_first_key` y expiración por `kb_combo_tick()`.
+  - [x] Crear `test/keyboard/test_kb_custom_key.c` validando `CKEY_MODE_PRESS_RELEASE` (`press_sustain`, `wait_for_finish`) y `CKEY_MODE_MULTI_ACTION` (`hold_sustain`, `SINGLE_TAP`, `DOUBLE_TAP`, `HOLD`).
+  - [x] Crear `test/keyboard/test_kb_macro.c` validando los 8 modos de ejecución (`ONCE_STACK_ONCE`, `ONCE_NO_STACK`, `ONCE_STACK_N`, `HOLD_REPEAT`, `HOLD_REPEAT_CANCEL`, `TOGGLE_REPEAT`, `TOGGLE_REPEAT_CANCEL`, `BURST_N`), recursión acotada (`depth <= 5`) y limpieza al cancelar (`kb_macro_force_clear`).
+- [x] **5.2. Tests unitarios para `Blast+Reconcile` (`comm_module`), `split_role`/`split_sync` y `cfgmod`**
+  - [x] Crear `test/comm/test_comm_blast.c` validando transacciones multipaquete `Blast+Reconcile`, reconstrucción de bitmap con pérdida simulada de paquetes `MID`, límite de rondas de reconciliación (`TX_BLAST_MAX_RECONCILE_ROUNDS`), reintentos por `NAK` y lock de sesión entre transportes.
+  - [x] Crear `test/split/test_split_role_and_sync.c` validando todas las reglas de desempate de `split_role_on_negotiate()`, el intercambio `ROLE_SWAP_REQ`/`ACK` y la compresión/descompresión delta de matriz en `split_sync.c`.
+  - [x] Crear `test/config/test_cfgmod.c` validando `cfgmod_handle_usb_comm()` (`GET`, `SET`, borrado con payload vacío, actualización de máscaras `mac_idx`/`cmb_idx`/`ck_idx`, validación de tamaños y `CFG_KEY_*_LIMITS`).
+- [x] **5.3. Higiene arquitectónica, constantes de dominio y desacoplamiento (`main`, `cfgmod`, `ble_module`)**
+  - [x] Limpiar `main/main.c` eliminando variables e includes muertos (`enum ColorSet`, headers de TinyUSB) y desacoplar los handlers de prueba del botón físico.
+  - [x] Reemplazar literales mágicos (`64`, `32`, `120`, `15`, `16`, `256`, `8`) en `components/config_module/cfgmod.c` por constantes de dominio con `_Static_assert` de consistencia, y eliminar declaraciones `extern` duplicadas.
+  - [x] Modularizar `components/ble_module/blemod.c` (1428 líneas) extrayendo la máquina de estados de reconexión (`RECONN_PHASE_*`) y advertising a una unidad cohesiva y testeable en host.
+- [x] **5.4. Endurecimiento de compilación, sanitizers y guardia de memoria en CI**
+  - [x] Habilitar flags estrictos de compilación (`-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized`) en los `CMakeLists.txt` de los componentes propios.
+  - [x] Integrar ejecución de tests de concurrencia con `--tsan` (ThreadSanitizer) además de `--asan` en `test/run_tests.sh` y `.github/workflows/ci.yml`.
+  - [x] Configurar guardia automática de tamaño de DRAM interna en `.github/workflows/ci.yml` verificando el reporte de `idf.py size-components`.
 
 #### 5.1. Suite de tests unitarios para motores de teclado no cubiertos (`kb_combo`, `kb_custom_key`, `kb_macro`)
 * **Diagnóstico verificado:** Aunque el subsistema `keyboard` cuenta con tests para `debounce`, `layout`, `matrix`, `report`, `state`, `system_action` y `tap_hold`, tres motores con alta densidad de estados carecen por completo de pruebas unitarias:
