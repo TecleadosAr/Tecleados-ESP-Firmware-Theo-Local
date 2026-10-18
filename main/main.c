@@ -31,9 +31,6 @@
 #include "usbmod.h"
 #include "statusmod.h"
 
-#include "tinyusb.h"
-#include "tinyusb_default_config.h"
-
 #include "ble_controller.h"
 #include "event_bus.h"
 #include "splitmod.h"
@@ -42,30 +39,27 @@
 
 #define TAG "MAIN"
 
-enum ColorSet { Red, Green, Blue };
-enum ColorSet current_color = Red;
-
-void single_press_test() {
-  ESP_LOGI(TAG, "test single press: Connection Test Beep");
-  splitmod_send_test_beep();
+static void on_system_button_single_press(void) {
+    ESP_LOGI(TAG, "System button single press: Connection Test Beep");
+    splitmod_send_test_beep();
 }
 
-void double_press_test() {
-  ESP_LOGI(TAG, "test double press: Activate BLE pairing on Profile 1");
-  if (!ble_hid_is_routing_active()) {
-      ble_hid_set_routing_active(true);
-  }
-  ble_hid_profile_pair(0);
+static void on_system_button_double_press(void) {
+    ESP_LOGI(TAG, "System button double press: Activate BLE pairing on Profile 1");
+    if (!ble_hid_is_routing_active()) {
+        ble_hid_set_routing_active(true);
+    }
+    ble_hid_profile_pair(0);
 }
 
-void hold_press_test() {
-  ESP_LOGI(TAG, "test hold press: Start split pairing");
-  splitmod_start_pairing(0);
+static void on_system_button_hold_press(void) {
+    ESP_LOGI(TAG, "System button hold press: Start split pairing");
+    splitmod_start_pairing(0);
 }
 
 static void init_procedure(void) {
   event_bus_init();
-  button_init(single_press_test, double_press_test, hold_press_test);
+  button_init(on_system_button_single_press, on_system_button_double_press, on_system_button_hold_press);
   cfg_init();
 
   // Initialize RGB. GPIO 48 is standard on many ESP32-S3 boards.

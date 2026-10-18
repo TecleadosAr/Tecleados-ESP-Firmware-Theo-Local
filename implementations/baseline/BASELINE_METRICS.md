@@ -111,3 +111,28 @@ Auditoría estática y dinámica de todas las tareas del firmware TEF:
 | **BLE + Split Master (Idle)** | 240 MHz | BLE + ESP-NOW | 35 – 50 mA | Ambas radios encendidas sin sleep de módem |
 | **Objetivo Light Sleep (Fase 3)** | DFS/WFI | BLE sync / ESP-NOW sync| **1.5 – 2.5 mA** | Requiere spike 3.0 de viabilidad |
 | **Objetivo Deep Sleep (Fase 3)** | RTC | Todas apagadas | **< 20 µA** | Wake por RTC GPIO1–6 con matriz |
+
+---
+
+## 6. Métricas de Memoria y Consolidación tras Fases 4 y 5
+
+### 6.1 Liberación de DRAM Interna (.bss a PSRAM)
+En la Fase 4.4, se migraron los buffers estáticos de 10 KB desde la memoria `.bss` de DRAM interna hacia asignaciones dinámicas en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT` con fallback a DRAM):
+- `s_tx_buf[MAX_TX_BUF_SIZE]` en `comm_tx.c` (10 KB).
+- `s_rx_buf[MAX_RX_BUF_SIZE]` en `comm_rx.c` (10 KB).
+- `s_cfg_resp_buf[CFG_USB_RESP_BUF_SIZE]` en `cfgmod.c` (10 KB).
+
+**Resultado medido:**
+- **DRAM interna (.bss) liberada:** **30.0 KB (30,720 bytes)**.
+- **Guardia de CI (.github/workflows/ci.yml):** Límite máximo de `diram_bss` fijado en 4096 bytes para `comm_module` y `config_module` tras compilar con `idf.py size-components`.
+
+### 6.2 Consolidación de Tareas Ociosas
+- `comm_timeout_task` (stack 4096 B): **Eliminada** en favor del callback de timeout reactivo.
+- `kb_sys_action` (stack 4096 B): **Consolidada** en el bucle determinista de `kb_mgr` vía `kb_system_action_poll()`.
+- `kb_tap_0..3` (stacks 4 × 3072 B): **Consolidadas** en pool reactivo sin tareas dedicadas.
+- **Total tareas reducidas:** De 13 tareas a 7 tareas activas.
+
+### 6.3 Flags Estrictos y Cobertura de CI
+- Compilación con `-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized` en todos los componentes propios.
+- Validación continua en CI bajo `gcc` con **ASan**, **UBSan** y **TSan** (`test/run_tests.sh --tsan`). Cobertura de 261/261 pruebas pasando con 0 data races.
+

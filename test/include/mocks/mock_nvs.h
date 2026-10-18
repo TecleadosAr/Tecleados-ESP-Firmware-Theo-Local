@@ -105,7 +105,10 @@ static inline esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key,
         *length = e->len;
         return ESP_OK;
     }
-    if (*length < e->len) return ESP_ERR_INVALID_SIZE;
+    if (*length < e->len) {
+        *length = e->len;
+        return ESP_ERR_NVS_INVALID_LENGTH;
+    }
     memcpy(out, e->data, e->len);
     *length = e->len;
     return ESP_OK;
@@ -153,8 +156,8 @@ static inline void mock_nvs_reset(void) {
 }
 
 /** Inject a blob into the mock NVS (for test setup). */
-static inline void mock_nvs_inject(const char *ns, const char *key,
-                                    const void *data, size_t len) {
+static inline void _mock_nvs_inject_raw(const char *ns, const char *key,
+                                        const void *data, size_t len) {
     char prev_ns[MOCK_NVS_MAX_NS_LEN];
     nvs_open_mode_t prev_mode = _mock_nvs_open_mode;
     strncpy(prev_ns, _mock_nvs_open_ns, MOCK_NVS_MAX_NS_LEN);

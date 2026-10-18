@@ -47,27 +47,28 @@
 #include "../../components/keyboard/kb_state.c"
 #include "../../components/comm_module/comm_crc.c"
 #include "../../components/comm_module/comm_rx.c"
+#include "../../components/comm_module/comm_tx.c"
 #include "../../components/config_module/cfg_system.c"
 #include "../../components/config_module/cfg_macros.c"
+#include "../../components/config_module/cfg_combos.c"
+#include "../../components/config_module/cfg_custom_keys.c"
 #include "../../components/keyboard/kb_report.c"
 #include "../../components/keyboard/kb_telemetry.c"
 #include "../../components/keyboard/kb_system_action.c"
 #include "../../components/keyboard/kb_layout.c"
-__attribute__((weak)) void kb_custom_key_process_action(uint16_t action_code, bool is_pressed) {
-    (void)action_code; (void)is_pressed;
-}
-__attribute__((weak)) bool kb_custom_key_is_tap_hold(uint16_t action_code, cfg_ckey_ma_t *out_ma) {
-    (void)action_code; (void)out_ma;
-    return false;
-}
 __attribute__((weak)) void comm_timeout_reschedule(void) {
 }
+__attribute__((weak)) void cfg_physical_register(void) {
+}
 #include "../../components/keyboard/kb_macro.c"
+#include "../../components/keyboard/kb_custom_key.c"
+#include "../../components/keyboard/kb_combo.c"
 #include "../../components/keyboard/kb_tap_hold.c"
 #include "../../components/keyboard/kb_debounce.c"
 #include "../../components/keyboard/kb_matrix_hal.c"
 #include "../../components/keyboard/kb_matrix.c"
 #include "../../components/config_module/cfg_layouts.c"
+#include "../../components/config_module/cfgmod.c"
 #include "../../components/status_module/statusmod.c"
 #include "../../components/battery_module/battery.c"
 #include "../../components/power_mgr/power_mgr.c"
@@ -80,6 +81,8 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "../../components/split/split_crypto.c"
 #include "../../components/split/split_role.c"
 #include "../../components/split/split_config_sync.c"
+#include "../../components/split/split_sync.c"
+#include "../../components/ble_module/ble_reconnect.c"
 #endif
 
 #undef TAG
@@ -96,10 +99,20 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "keyboard/test_kb_debounce.c"
 #include "keyboard/test_kb_tap_hold.c"
 #include "keyboard/test_kb_system_action.c"
+#include "keyboard/test_kb_combo.c"
+#include "keyboard/test_kb_custom_key.c"
+#include "keyboard/test_kb_macro.c"
 
 /* USB / Comm tests */
 #include "usb/test_usb_crc.c"
 #include "usb/test_usb_rx.c"
+#include "comm/test_comm_blast.c"
+
+/* Config tests */
+#include "config/test_cfgmod.c"
+
+/* BLE tests */
+#include "ble/test_ble_reconnect.c"
 
 /* System tests */
 #include "system/test_event_bus.c"
@@ -112,6 +125,7 @@ __attribute__((weak)) void comm_timeout_reschedule(void) {
 #include "split/test_split_protocol.c"
 #include "split/test_split_crypto.c"
 #include "split/test_split_config_sync.c"
+#include "split/test_split_role_and_sync.c"
 #endif
 
 int main(int argc, char *argv[]) {

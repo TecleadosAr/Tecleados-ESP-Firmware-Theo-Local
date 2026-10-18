@@ -86,19 +86,15 @@ static int s_post_reinit_directed_profile = -1;
 static bool s_skip_directed_on_resume = false;
 
 // Phase tracking for seamless multidevice reconnection
-typedef enum {
-    RECONN_PHASE_IDLE = 0,
-    RECONN_PHASE_SELECTED,  // Try selected up to 5 times
-    RECONN_PHASE_FOREVER,   // Cycle infinitely until ANY connection
-    RECONN_PHASE_FINITE     // Cycle finite (5x per profile) until queue empty
-} reconn_phase_t;
+#include "ble_reconnect.h"
 
-static reconn_phase_t s_reconn_phase = RECONN_PHASE_IDLE;
-static uint16_t s_reconnect_pending_bitmap = 0;
+static ble_reconnect_t s_reconn;
+#define s_reconn_phase (s_reconn.phase)
+#define s_reconnect_pending_bitmap (s_reconn.pending_bitmap)
+#define s_reconnect_cycles (s_reconn.cycles)
+#define s_reconnect_last_profile (s_reconn.last_profile)
+#define s_selected_retries_left (s_reconn.selected_retries_left)
 static uint16_t s_slave_mirror_conn_bitmap = 0; // Latch: last known connected profiles on Master
-static uint8_t s_reconnect_cycles[CFG_BLE_MAX_PROFILES] = {0};
-static int s_reconnect_last_profile = -1;
-static int s_selected_retries_left = 0;
 
 // Buffer to hold peer address during pairing until encryption is complete
 static ble_addr_t s_pending_addr;
@@ -126,31 +122,13 @@ static void ble_hid_dump_bonds(void);
 /* ========================================================================= */
 
 static void ble_hid_start_next_reconnect(void) {
-    if (s_reconn_phase == RECONN_PHASE_IDLE || s_reconnect_pending_bitmap == 0) {
-        s_directed_profile = -1;
-        s_reconn_phase = RECONN_PHASE_IDLE;
-        ble_hid_advertise(); // Fall back to background advertising
-        return;
-    }
-
-    // Pick next profile using round-robin
-    int picked = -1;
-    for (int i = 1; i <= CFG_BLE_MAX_PROFILES; i++) {
-        int candidate = (s_reconnect_last_profile + i) % CFG_BLE_MAX_PROFILES;
-        if (s_reconnect_pending_bitmap & (1 << candidate)) {
-            picked = candidate;
-            break;
-        }
-    }
-
+    int picked = ble_reconnect_pick_next(&s_reconn);
     if (picked != -1) {
         s_directed_profile = picked;
-        s_reconnect_last_profile = picked;
-        ESP_LOGI(TAG, "Starting sequential reconnect for profile %d (Phase %d)", picked, s_reconn_phase);
+        ESP_LOGI(TAG, "Starting sequential reconnect for profile %d (Phase %d)", picked, s_reconn.phase);
         ble_hid_advertise();
     } else {
         s_directed_profile = -1;
-        s_reconn_phase = RECONN_PHASE_IDLE;
         ble_hid_advertise();
     }
 }
