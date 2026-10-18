@@ -56,7 +56,7 @@ int ble_reconnect_pick_next(ble_reconnect_t *r) {
 
     int picked = -1;
     for (int i = 1; i <= CFG_BLE_MAX_PROFILES; i++) {
-        int candidate = (r->last_profile + i) % CFG_BLE_MAX_PROFILES;
+        int candidate = (r->last_profile + i + CFG_BLE_MAX_PROFILES) % CFG_BLE_MAX_PROFILES;
         if (r->pending_bitmap & (1u << candidate)) {
             picked = candidate;
             break;
@@ -134,11 +134,15 @@ ble_reconn_action_t ble_reconnect_on_connect_failed(ble_reconnect_t *r, int prof
 
     if (r->phase == RECONN_PHASE_SELECTED) {
         r->selected_retries_left--;
-        if (r->selected_retries_left <= 0) {
+        if (r->selected_retries_left > 0) {
+            r->directed_profile = profile_id;
+            return BLE_RECONN_ACT_RETRY_SELECTED;
+        } else {
             if (is_valid && profile_id >= 0 && profile_id < CFG_BLE_MAX_PROFILES) {
                 r->pending_bitmap |= (1u << profile_id);
             }
             r->phase = RECONN_PHASE_FOREVER;
+            r->directed_profile = -1;
         }
     }
 

@@ -259,6 +259,9 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
           if (aligned_buf) {
               memcpy(aligned_buf, data_in, data_in_len);
               effective_data_in = (const uint8_t *)aligned_buf;
+          } else {
+              rsp.status = ESP_ERR_NO_MEM;
+              goto end_set;
           }
       }
 
@@ -273,18 +276,15 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
                   memcpy(out_payload, &id16, sizeof(id16));
                   actual_payload_len = sizeof(id16);
               }
-              if (aligned_buf) free(aligned_buf);
               goto end_set;
           } else if (hdr.item_id & 0x8000) {
               // Rename layout: item_id & ~0x8000 is the real id
               uint16_t id = hdr.item_id & ~0x8000;
               rsp.status = cfg_layout_rename((uint8_t)id, (const char *)effective_data_in);
-              if (aligned_buf) free(aligned_buf);
               goto end_set;
           } else if (data_in_len == 0) {
               // Delete layout
               rsp.status = cfg_layout_delete((uint8_t)hdr.item_id);
-              if (aligned_buf) free(aligned_buf);
               goto end_set;
           }
       }
@@ -322,8 +322,8 @@ esp_err_t cfgmod_handle_usb_comm(const uint8_t *data, size_t len, uint8_t *out,
               }
           }
       }
+end_set:
       if (aligned_buf) free(aligned_buf);
-end_set:;
   } else {
       rsp.status = ESP_ERR_INVALID_ARG;
   }

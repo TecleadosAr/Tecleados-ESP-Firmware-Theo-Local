@@ -74,20 +74,36 @@ test/
       mock_freertos.h     FreeRTOS mock (semaphores, queues, tasks)
       mock_nvs.h          NVS flash mock
       mock_tinyusb.h      TinyUSB HID mock + send_payload capture
-  keyboard/               Keyboard subsystem tests (4 files)
+  keyboard/               Keyboard subsystem tests (10 files)
     test_kb_state.c       LED state tracking (real kb_state.c)
     test_kb_report.c      HID routing + NKRO-to-6KRO (real kb_report.c)
     test_kb_layout.c      Factory defaults, transparent fallthrough, DRAM cache,
                           NVS-injected layers (real cfg_layouts.c + kb_layout.c)
+    test_kb_matrix.c      Matrix scanning logic (real kb_matrix.c)
+    test_kb_debounce.c    Eager debounce state machine (real kb_debounce.c)
+    test_kb_tap_hold.c    Tap-hold flavors & timing (real kb_tap_hold.c)
     test_kb_system_action.c  Tap/hold gesture engine (real kb_system_action.c)
-  usb/                    USB communication tests (2 files)
+    test_kb_combo.c       Chord combos, subsumption, strict order, delayed press (real kb_combo.c)
+    test_kb_custom_key.c  PressRelease & MultiAction rules, sustain, lookup (real kb_custom_key.c)
+    test_kb_macro.c       8 execution modes, recursion limiting, cancel (real kb_macro.c)
+  usb/ & comm/            Transport layer tests (3 files)
     test_usb_crc.c        CRC-8 prepare/verify (real usb_crc.c)
-    test_usb_rx.c         Blast-mode RX, bitmap, packet ordering, commit
-                          (real usb_callbacks_rx.c)
-  system/                 System-level tests (2 files)
+    test_usb_rx.c         Blast-mode RX, bitmap, packet ordering (real usb_callbacks_rx.c)
+    test_comm_blast.c     Blast+Reconcile TX, loss recovery, NAK/round limits (real comm_tx.c)
+  config/                 Config module dispatch tests (1 file)
+    test_cfgmod.c         GET limits, CRUD, mask updates, size mismatch (real cfgmod.c)
+  ble/                    BLE subsystem tests (1 file)
+    test_ble_reconnect.c  Reconnection state machine & round-robin (real ble_reconnect.c)
+  system/, battery/, power/ System-level tests (4 files)
     test_event_bus.c      Event bases, posting, retrieval (real event_bus.c)
-    test_status_module.c  BLE event-driven state cache, profile bitmap, pairing,
-                          routing mode, USB callback (real statusmod.c)
+    test_status_module.c  BLE event-driven state cache, profile bitmap, pairing (real statusmod.c)
+    test_battery.c        Battery voltage LUT interpolation, hysteresis (real battery.c)
+    test_power_mgr.c      Power manager state transitions, sleep locks (real power_mgr.c)
+  split/                  Split keyboard protocol & sync tests (4 files, GCC/Clang)
+    test_split_protocol.c Frame build/parse, mutation fuzzing (real split_protocol.c)
+    test_split_crypto.c   ECDH X25519 & AES-128-CCM (real split_crypto.c)
+    test_split_config_sync.c Bulk config sync across halves (real split_config_sync.c)
+    test_split_role_and_sync.c Role negotiation rules, symmetry, delta sync (real split_role.c, split_sync.c)
 ```
 
 ## Building and Running

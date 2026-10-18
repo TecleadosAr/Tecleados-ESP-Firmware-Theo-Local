@@ -153,3 +153,35 @@ TEST_CASE(ble_reconnect, connect_failed_exhausts_to_forever) {
     TEST_ASSERT((r.pending_bitmap & (1u << 3)) != 0);
     TEST_ASSERT_EQUAL(3, r.directed_profile);
 }
+
+TEST_CASE(ble_reconnect, connect_failed_retries_selected) {
+    ble_reconnect_t r;
+    ble_reconnect_init(&r);
+
+    ble_reconnect_start_selected(&r, 2, 3);
+    TEST_ASSERT_EQUAL(RECONN_PHASE_SELECTED, r.phase);
+    TEST_ASSERT_EQUAL(3, r.selected_retries_left);
+
+    // Fail 1: retries left becomes 2 -> retry selected
+    ble_reconn_action_t act = ble_reconnect_on_connect_failed(&r, 2, true);
+    TEST_ASSERT_EQUAL(BLE_RECONN_ACT_RETRY_SELECTED, act);
+    TEST_ASSERT_EQUAL(RECONN_PHASE_SELECTED, r.phase);
+    TEST_ASSERT_EQUAL(2, r.selected_retries_left);
+    TEST_ASSERT_EQUAL(2, r.directed_profile);
+
+    // Fail 2: retries left becomes 1 -> retry selected
+    act = ble_reconnect_on_connect_failed(&r, 2, true);
+    TEST_ASSERT_EQUAL(BLE_RECONN_ACT_RETRY_SELECTED, act);
+    TEST_ASSERT_EQUAL(RECONN_PHASE_SELECTED, r.phase);
+    TEST_ASSERT_EQUAL(1, r.selected_retries_left);
+    TEST_ASSERT_EQUAL(2, r.directed_profile);
+
+    // Fail 3: retries left becomes 0 -> transitions to FOREVER
+    act = ble_reconnect_on_connect_failed(&r, 2, true);
+    TEST_ASSERT_EQUAL(BLE_RECONN_ACT_START_ADVERTISE, act);
+    TEST_ASSERT_EQUAL(RECONN_PHASE_FOREVER, r.phase);
+    TEST_ASSERT_EQUAL(0, r.selected_retries_left);
+    TEST_ASSERT((r.pending_bitmap & (1u << 2)) != 0);
+    TEST_ASSERT_EQUAL(2, r.directed_profile);
+}
+
