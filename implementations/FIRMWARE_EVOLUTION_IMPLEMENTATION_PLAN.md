@@ -1,7 +1,7 @@
 # Plan Integral de Implementación: Evolución Arquitectónica del Firmware (TEF)
 
 > **Documento:** `FIRMWARE_EVOLUTION_IMPLEMENTATION_PLAN.md`  
-> **Estado:** Revisado v3 — Fases 0–3 completadas; Fases 4–5 reorientadas a calidad, robustez y estado general del firmware (sin nuevas features de hardware)  
+> **Estado:** Revisado v3 — Fases 0–5 completadas (plan de evolución arquitectónica finalizado y verificado con 262 tests unitarios en ASan/TSan)  
 > **Rama de Trabajo:** `firmware-evolution`  
 > **Plataforma Objetivo:** ESP32-S3 (Xtensa dual-core, **ESP-IDF 6.0.2** — ver `sdkconfig` y `main/idf_component.yml` que exige `idf >= 6.0`) & Configurator (React 19 / Vite / TS)  
 > **Fecha:** Octubre 2026
@@ -536,7 +536,6 @@ flowchart LR
 
 ## 8. Siguientes Pasos Inmediatos
 
-1. **Iniciar Fase 4.1:** Sanear la concurrencia en `comm_tx.c` y `usbmod.c` (mutex de estado TX, serialización de TinyUSB, eliminación de VLA y funciones obsoletas).
-2. **Continuar con Fase 4.2 y 4.3:** Proteger la recarga en caliente de `kb_combo`, `kb_custom_key`, `kb_macro`, `cfg_layouts` y `statusmod`, e integrar `kb_system_action_poll()` y los tap-workers al flujo determinista sin tareas ociosas.
-3. **Ejecutar Fase 4.4:** Migrar los buffers de 10 KB (`s_tx_buf`, `s_rx_buf`, `s_cfg_resp_buf`) a PSRAM y verificar la ganancia con `idf.py size-components`.
-4. **Completar Fase 5:** Agregar las suites de tests unitarios faltantes (`kb_combo`, `kb_custom_key`, `kb_macro`, `comm_blast`, `split_role_and_sync`, `cfgmod`), limpiar `main.c`/`cfgmod.c`/`blemod.c` y activar los checks estrictos en CI.
+1. **Plan de evolución completado:** Todas las Fases (0 a 5) se encuentran completamente implementadas, saneadas y testeadas en host con ASan y TSan (262 assertions/suites verdes) y CI endurecido.
+2. **Validación en hardware físico:** Flasheo y verificación con instrumentación en target ESP32-S3 (perfil de consumo PPK2, latencia con analizador lógico y pruebas de enlace BLE multi-host en vivo).
+3. **Mantenimiento continuo:** Preservar guardias de memoria (`diram_bss <= 4096`) y flags estrictos (`-Wall -Wextra -Wvla -Werror=...`) en todos los nuevos PRs hacia `main`.

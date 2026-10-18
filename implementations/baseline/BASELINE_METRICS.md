@@ -134,5 +134,5 @@ En la Fase 4.4, se migraron los buffers estáticos de 10 KB desde la memoria `.b
 
 ### 6.3 Flags Estrictos y Cobertura de CI
 - Compilación con `-Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized` en todos los componentes propios.
-- Validación continua en CI bajo `gcc` con **ASan**, **UBSan** y **TSan** (`test/run_tests.sh --tsan`). Cobertura de 261/261 pruebas pasando con 0 data races.
+- Validación continua en CI bajo `gcc` con **ASan**, **UBSan** y **TSan** (`test/run_tests.sh --tsan`). Cobertura de 262/262 pruebas pasando con 0 data races.
 

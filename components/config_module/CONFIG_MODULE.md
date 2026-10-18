@@ -66,10 +66,9 @@ The Config Module acts as the central state provider for every functional subsys
 Communications follow a **Request/Response** pattern on the Comm channel (USB or BLE).
 
 ### Frame Structure
-### Frame Structure
 `[ModuleID (1b)] [Cmd (1b)] [KeyID (1b)] [Reserved (1b)] [Status (4b)] [Binary Payload (Nb)]`
 
-> **Note**: An explicitly sized custom header (7 bytes) ensures that the payload perfectly aligns to an 8-byte boundary, mitigating ESP32 `LoadStoreAlignment` exceptions.
+> **Note**: An explicitly sized custom header (7 bytes) is handled with alignment guards in `cfgmod.c` to ensure natural 4-byte/8-byte memory access, mitigating ESP32 `LoadStoreAlignment` exceptions.
 
 ### Key ID Map
 | Key ID | Field | Description |
@@ -77,13 +76,16 @@ Communications follow a **Request/Response** pattern on the Comm channel (USB or
 | `0x02` | `PHYSICAL_LAYOUT` | Raw geometry for the UI configurator. |
 | `0x10` | `LAYOUTS` | Layout outline (IDs + names). |
 | `0x11` | `LAYOUT_SINGLE` | Detailed action codes for a layout (GET/SET/DELETE). |
-| `0x12` | `LAYOUT_LIMITS` | Returns max layout slots. |
+| `0x12` | `LAYOUT_LIMITS` | Returns max layout slots (`CFG_LAYOUT_MAX_COUNT`). |
 | `0x07` | `MACROS` | The full macro outline (names and IDs). |
 | `0x08` | `MACRO_LIMITS` | Returns max events per macro and max macro slots. |
 | `0x09` | `MACRO_SINGLE` | Detailed event sequence for one macro (GET/SET/DELETE). |
 | `0x0A` | `CKEYS` | The full custom key outline. |
 | `0x0B` | `CKEY_SINGLE` | Logic rules for one custom key (GET/SET/DELETE). |
 | `0x0C` | `SYSTEM` | Device identity (name, split mirror, shared BLE addr). |
+| `0x0D` | `COMBOS` | The full combo outline (all IDs/names). |
+| `0x0E` | `COMBO_SINGLE` | Single Combo configuration (GET/SET/DELETE). |
+| `0x0F` | `COMBO_LIMITS` | Returns {maxCombos, maxKeys} (`CFG_COMBOS_MAX_COUNT`, `CFG_COMBO_MAX_KEYS`). |
 
 ---
 
@@ -115,9 +117,10 @@ graph TD
 
 | File | Responsibility |
 |---|---|
-| `cfgmod.c` | Core router, COMM callback management, and dual-path NVS logic. |
+| `cfgmod.c` | Core router, COMM callback management, alignment guards, and dual-path NVS logic. |
 | `cfg_layouts.c` | High-speed binary storage for matrix action codes. |
 | `cfg_macros.c` | Manages macro index and multi-event storage. |
+| `cfg_combos.c` | Manages combo index and chorded multi-key definitions. |
 | `cfg_custom_keys.c` | Handles complex press/release/tap/hold logic rules. |
 | `cfg_ble.c` | Identity management for 9 BLE profiles and bond key persistence. |
 | `cfg_system.c` | Global device identity and system-wide thresholds. |

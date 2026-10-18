@@ -64,18 +64,32 @@ jobs:
           idf.py size-components > size_report.txt
           cat size_report.txt
           python3 -c "
-          import sys, re
+          import sys
           with open('size_report.txt') as f:
-              content = f.read()
-          # Verify comm_module and config_module do not regress to static 10KB allocations in internal bss
-          for comp, max_bss in [('comm_module', 4096), ('config_module', 4096)]:
-              m = re.search(r'components/' + comp + r'.*?\|\s+(\d+)\s+\|\s+(\d+)\s+\|\s+(\d+)', content)
-              if m:
-                  bss = int(m.group(3))
-                  print(f'{comp} diram_bss: {bss} bytes (max allowed: {max_bss})')
-                  if bss > max_bss:
-                      print(f'ERROR: {comp} diram_bss exceeded {max_bss} bytes!')
-                      sys.exit(1)
+              lines = f.readlines()
+          targets = [('comm_module', 4096), ('config_module', 4096)]
+          found = {}
+          for line in lines:
+              parts = [p.strip() for p in line.split('|')]
+              if len(parts) >= 4:
+                  comp_name = parts[0]
+                  for comp, max_bss in targets:
+                      if comp in comp_name:
+                          try:
+                              data_val = int(parts[1])
+                              bss_val = int(parts[2])
+                              found[comp] = (data_val, bss_val, max_bss)
+                          except ValueError:
+                              pass
+          if len(found) < len(targets):
+              missing = [c for c, _ in targets if c not in found]
+              print(f'ERROR: could not find components {missing} in size_report.txt!')
+              sys.exit(1)
+          for comp, (data_val, bss_val, max_bss) in found.items():
+              print(f'{comp} diram_data: {data_val} B, diram_bss: {bss_val} B (limit: {max_bss} B)')
+              if bss_val > max_bss:
+                  print(f'ERROR: {comp} diram_bss exceeded {max_bss} bytes!')
+                  sys.exit(1)
           print('DRAM internal guard check passed.')
           "
 

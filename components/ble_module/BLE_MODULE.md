@@ -1,7 +1,7 @@
 # BLE Module (`blemod`)
 
-> **Source:** `components/ble_module/` — `blemod.c`, `ble_hid_service.c`
-> **Public API:** `include/blemod.h`
+> **Source:** `components/ble_module/` — `blemod.c`, `ble_reconnect.c`, `ble_hid_service.c`, `ble_comm_service.c`, `ble_comm_transport.c`
+> **Public API:** `include/blemod.h`, `include/ble_reconnect.h`
 
 The BLE module is the **Bluetooth HID peripheral stack** of the keyboard. It wraps the NimBLE host into a clean, opaque interface that the rest of the firmware talks to without knowing anything about GAP, GATT, or the NimBLE internals. It is responsible for:
 
@@ -66,6 +66,12 @@ Under the hood, `blemod` uses the **NimBLE** host, which is Espressif's open-sou
 | **PAIRING** | Explicitly requested | Discoverable (GEN_DISC) | 20–30 ms fast, 60 s max |
 | **RECONNECTING** | Trying to reconnect a known profile | Hidden (NON_DISC) | 20–30 ms fast, 15 s |
 | **BACKGROUND** | Idle, routing active, profile not connected | Hidden (NON_DISC) | 800–1000 ms slow |
+
+**Reconnection State Machine (`ble_reconnect.c`)** — Decoupled 3-phase reconnection engine:
+- `RECONN_PHASE_SELECTED`: Focuses retries on the designated active profile with interleaved round-robin opportunities for waiting secondary profiles.
+- `RECONN_PHASE_FOREVER`: Unbounded cyclical round-robin through paired profiles until any host connects.
+- `RECONN_PHASE_FINITE`: Bounded sweeps (up to 5 attempts per waiting profile) following a primary connection to quickly reconnect paired secondary devices.
+- Fully unit-testable in host environment without initializing NimBLE.
 
 **Address rotation** — each of the 9 profile slots uses a unique *static random address* derived from the device's base BT MAC plus a per-slot `addr_nonce`. When you pair a profile (`ble_hid_profile_pair()`), the nonce increments, the address rotates, and the host sees it as a completely new device — forcing a clean re-pair without touching any other profile.
 
@@ -314,7 +320,11 @@ kb_manager_start()
 
 | File | Responsibility |
 |---|---|
-| `blemod.c` | Core logic for NimBLE integration, advertising state machine, and profile handling. |
+| `blemod.c` | Core logic for NimBLE integration, advertising triggers, and profile handling. |
+| `ble_reconnect.c` | Decoupled 3-phase reconnection state machine (`SELECTED`, `FOREVER`, `FINITE`) and profile round-robin. |
 | `ble_hid_service.c` | GATT service implementation for standard HID Report Maps and control points. |
+| `ble_comm_service.c` | Custom GATT service for web configurator comm channel over BLE. |
+| `ble_comm_transport.c` | Adapter between NimBLE GATT callbacks and `comm_module` transport engine. |
 | `ble_controller.c` | Translation layer bridging physical key events to BLE system commands. |
 | `include/blemod.h` | Public APIs for sending reports, selecting profiles, and managing the radio. |
+| `include/ble_reconnect.h` | Standalone header and state definitions for the reconnection engine. |
