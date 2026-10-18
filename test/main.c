@@ -82,6 +82,7 @@ __attribute__((weak)) void cfg_physical_register(void) {
 #include "../../components/split/split_role.c"
 #include "../../components/split/split_config_sync.c"
 #include "../../components/split/split_sync.c"
+#include "../../components/ble_module/ble_reconnect.c"
 #endif
 
 #undef TAG
@@ -109,6 +110,9 @@ __attribute__((weak)) void cfg_physical_register(void) {
 
 /* Config tests */
 #include "config/test_cfgmod.c"
+
+/* BLE tests */
+#include "ble/test_ble_reconnect.c"
 
 /* System tests */
 #include "system/test_event_bus.c"
