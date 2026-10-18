@@ -3,3 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES esp_wifi esp_event freertos event_bus config_module keyboard mbedtls usb_module battery_module ble_module comm_module power_mgr
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized)

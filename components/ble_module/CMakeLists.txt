@@ -3,3 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "." "include"
     REQUIRES esp_timer driver freertos bt nvs_flash esp_event keyboard event_bus battery_module comm_module
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized)

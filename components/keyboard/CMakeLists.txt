@@ -3,3 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "." "include"
     REQUIRES esp_timer driver freertos tinyusb usb_module ble_module config_module event_bus comm_module power_mgr
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wvla -Werror=implicit-fallthrough -Werror=uninitialized)
