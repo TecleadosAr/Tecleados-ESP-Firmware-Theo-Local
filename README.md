@@ -759,3 +759,7 @@ For the full specification including failure recovery, CRC details, and system c
 - [ ] 2.4 GHz wireless via ESP-NOW dongle
 - [ ] QMK firmware compatibility layer
 - [ ] OLED display support
+
+## Explicaciones de desarrollo (español)
+
+El [índice de explicaciones](explicaciones/README.md) describe el diagnóstico de puertos COM, la corrección local del mutex TX y la organización del espacio de desarrollo. Incluye una plantilla para conservar el aprendizaje de futuros cambios. Estas notas distinguen lo verificado de lo pendiente y no sustituyen las pruebas del producto.
